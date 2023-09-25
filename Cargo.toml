@@ -17,5 +17,6 @@ members = [
 
 [dev-dependencies]
 anyhow = "1.0.75"
+rusty-fork = "0.3.0"
 test-log = { version = "0.2.12", features = ["trace"], default-features = false }
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }

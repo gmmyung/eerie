@@ -14,8 +14,8 @@ fn main() {
     // Refer to https://stackoverflow.com/questions/35220111/install-name-tool-difference-between-change-and-id
     Command::new("install_name_tool")
         .arg("-id")
-        .arg(iree_compiler_lib_path.display().to_string())
-        .arg(iree_compiler_lib_path.display().to_string())
+        .arg(iree_compiler_lib_path.as_os_str())
+        .arg(iree_compiler_lib_path.as_os_str())
         .spawn()
         .expect("Failed to set the library ID");
     
@@ -26,8 +26,8 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", PathBuf::from(IREE_BUILD_PATH).join("lib").display());
     println!("cargo:rustc-link-lib=IREECompiler");
-    println!("cargo:rerun-if-changed={}", iree_compiler_include_path.display().to_string()); 
-    println!("cargo:rerun-if-changed={}", iree_compiler_lib_path.display().to_string());
+    println!("cargo:rerun-if-changed={}", iree_compiler_include_path.to_str().unwrap()); 
+    println!("cargo:rerun-if-changed={}", iree_compiler_lib_path.to_str().unwrap());
 
     let bindings = bindgen::Builder::default()
         .header(iree_compiler_include_path.display().to_string())
