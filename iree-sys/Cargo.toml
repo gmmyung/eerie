@@ -6,3 +6,7 @@ edition = "2021"
 [build-dependencies]
 bindgen = "0.68.1"
 
+[features]
+default = ["from-python"]
+from-python = []
+from-source = []

@@ -1,0 +1,3 @@
+[submodule "iree-sys/iree"]
+	path = iree-sys/iree
+	url = https://github.com/openxla/iree.git

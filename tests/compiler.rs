@@ -93,7 +93,7 @@ rusty_fork_test! {
     }
 
     #[test]
-    fn source_from_buffer() {
+    fn source_from_cstr() {
         let source_ir = r#"
         module @arithmetic {
             func.func @simple_add(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {
@@ -112,7 +112,7 @@ rusty_fork_test! {
     }
 
     #[test]
-    fn source_from_invalid_buffer() {
+    fn source_from_invalid_cstr() {
         let source_ir = r#"
         module @arithmetic {
             func.func @simple_add(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {

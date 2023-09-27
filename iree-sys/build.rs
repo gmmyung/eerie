@@ -1,37 +1,36 @@
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
+use std::str::FromStr;
 
 const IREE_BUILD_PATH: &str = "/Users/gmmyung/Developer/iree-build";
-const IREE_INCLUDE_PATH: &str = "/Users/gmmyung/Developer/iree/compiler/bindings/c";
 
 fn main() {
-    let iree_compiler_lib_path = PathBuf::from(IREE_BUILD_PATH)
-        .join("lib")
-        .join("libIREECompiler.0.dylib");
+    #[cfg(all(feature = "from-python", feature = "from-source"))]
+    {
+        panic!("Cannot build with both `from-python` and `from-source` features enabled, disable one of them");
+    }
 
-    // Set the library ID to the path of the library.
-    // Refer to https://stackoverflow.com/questions/35220111/install-name-tool-difference-between-change-and-id
-    Command::new("install_name_tool")
-        .arg("-id")
-        .arg(iree_compiler_lib_path.as_os_str())
-        .arg(iree_compiler_lib_path.as_os_str())
-        .spawn()
-        .expect("Failed to set the library ID");
-    
-    let iree_compiler_include_path = PathBuf::from(IREE_INCLUDE_PATH)
+    let iree_include_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
         .join("iree")
         .join("compiler")
-        .join("embedding_api.h");
-
-    println!("cargo:rustc-link-search=native={}", PathBuf::from(IREE_BUILD_PATH).join("lib").display());
-    println!("cargo:rustc-link-lib=IREECompiler");
-    println!("cargo:rerun-if-changed={}", iree_compiler_include_path.to_str().unwrap()); 
-    println!("cargo:rerun-if-changed={}", iree_compiler_lib_path.to_str().unwrap());
+        .join("bindings")
+        .join("c");
+    println!(
+        "cargo:rerun-if-changed={}",
+        iree_include_path.to_str().unwrap()
+    );
 
     let bindings = bindgen::Builder::default()
-        .header(iree_compiler_include_path.display().to_string())
-        .clang_arg(format!("-I{}", IREE_INCLUDE_PATH))
+        .header(
+            iree_include_path
+                .join("iree")
+                .join("compiler")
+                .join("embedding_api.h")
+                .display()
+                .to_string(),
+        )
+        .clang_arg(format!("-I{}", iree_include_path.display()))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .generate()
         .expect("Unable to generate bindings");
@@ -40,4 +39,38 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        PathBuf::from(IREE_BUILD_PATH).join("lib").display()
+    );
+
+
+    // Fetch Shared Library Path
+    let iree_lib_path;
+    #[cfg(feature = "from-python")]
+    {
+        iree_lib_path = PathBuf::from_str(
+            &String::from_utf8(
+                Command::new("python3")
+                    .arg("-c")
+                    .arg(r#""import iree.compiler as _; print(_.__path__[0])""#)
+                    .output()
+                    .expect("Failed to fetch the shared library path")
+                    .stdout,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .join("_mlir_libs");
+    }
+    #[cfg(feature = "from-source")]
+    {
+        iree_lib_path = env::var("IREE_LIB_PATH")
+            .map(PathBuf::from)
+            .expect("Failed to fetch the shared library path");
+    }
+    
+    println!("cargo:rustc-link-lib=IREECompiler");
+    println!("cargo:rustc-link-search=native={}", iree_lib_path.display());
 }
