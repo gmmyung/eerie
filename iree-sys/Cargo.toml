@@ -5,8 +5,12 @@ edition = "2021"
 
 [build-dependencies]
 bindgen = "0.68.1"
+cmake = "0.1.50"
 
 [features]
-default = ["from-python"]
-from-python = []
-from-source = []
+default = ["compiler", "from-python", "runtime"]
+from-python = ["compiler"]
+from-source = ["compiler"]
+compiler = []
+runtime = []
+
