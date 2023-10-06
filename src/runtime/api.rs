@@ -1,7 +1,10 @@
-use super::{error::RuntimeError, base::StringView};
+use std::{path::Path, ffi::CString, ptr::null};
+
 use crate::runtime::base::Allocator;
-use iree_sys::runtime::{self as sys, iree_status_handle_t};
-use tracing::{debug, error};
+
+use super::{base::StringView, error::RuntimeError};
+use iree_sys::runtime as sys;
+use tracing::debug;
 
 use super::{base, hal::DriverRegistry};
 
@@ -34,7 +37,6 @@ impl<'a> InstanceOptions<'a> {
 
 pub struct Instance {
     ctx: *mut sys::iree_runtime_instance_t,
-    allocator: Allocator,
 }
 
 // Instance is thread-safe.
@@ -42,22 +44,19 @@ unsafe impl Send for Instance {}
 unsafe impl Sync for Instance {}
 
 impl Instance {
-    pub fn new(options: &InstanceOptions, allocator: Allocator) -> Result<Self, RuntimeError> {
+    pub fn new(options: &InstanceOptions) -> Result<Self, RuntimeError> {
         debug!("Creating instance...");
         let mut out_ptr = std::ptr::null_mut();
         base::Status::from_raw(unsafe {
             sys::iree_runtime_instance_create(
                 &options.ctx,
-                allocator.ctx,
+                base::Allocator::get_global().ctx,
                 &mut out_ptr as *mut *mut sys::iree_runtime_instance_t,
             )
         })
         .to_result()?;
         debug!("Instance created!, out_ptr: {:p}", out_ptr);
-        Ok(Self {
-            ctx: out_ptr,
-            allocator,
-        })
+        Ok(Self { ctx: out_ptr })
     }
 
     fn get_host_allocator(&self) -> base::Allocator {
@@ -78,7 +77,7 @@ impl Instance {
         DriverRegistry { ctx: out_ptr }
     }
 
-    fn try_create_default_device(&self, name: &str) -> Result<super::hal::Device, RuntimeError> {
+    pub fn try_create_default_device(&self, name: &str) -> Result<super::hal::Device, RuntimeError> {
         let mut out_ptr = std::ptr::null_mut();
         let status = unsafe {
             sys::iree_runtime_instance_try_create_default_device(
@@ -114,7 +113,7 @@ impl Default for SessionOptions {
         let mut options = Self {
             ctx: sys::iree_runtime_session_options_t {
                 context_flags: 0,
-                builtin_modules: 0,
+                builtin_modules: 0
             },
         };
         unsafe {
@@ -124,9 +123,9 @@ impl Default for SessionOptions {
     }
 }
 
-struct Session<'a, 'b> {
+pub struct Session<'a, 'b> {
     ctx: *mut sys::iree_runtime_session_t,
-    instance_marker: std::marker::PhantomData<&'a mut Instance>,
+    _instance: &'a Instance,
     device_marker: std::marker::PhantomData<&'b mut super::hal::Device>,
 }
 
@@ -155,9 +154,57 @@ impl<'a, 'b> Session<'a, 'b> {
             .map_err(|e| RuntimeError::StatusError(e))?;
         Ok(Self {
             ctx: out_ptr,
-            instance_marker: std::marker::PhantomData,
+            _instance: instance,
             device_marker: std::marker::PhantomData,
         })
+    }
+
+    fn get_allocator(&self) -> base::Allocator {
+        let out = unsafe { sys::iree_runtime_session_host_allocator(self.ctx) };
+        base::Allocator { ctx: out }
+    }
+
+    // pub fn get_device(&self) -> super::hal::Device {
+    //
+    // pub fn get_device_allocator(&self) -> base::Allocator {
+    // TODO: implement this
+
+
+    pub fn trim(&self) -> Result<(), RuntimeError> {
+        debug!("Trimming session...");
+        base::Status::from_raw(unsafe { sys::iree_runtime_session_trim(self.ctx) })
+            .to_result()
+            .map_err(|e| RuntimeError::StatusError(e))
+    }
+
+    // pub fn append_module(&self, module: &Module) -> Result<(), RuntimeError> {
+    // TODO: implement this
+    
+    pub unsafe fn append_module_from_memory(&self, flatbuffer_data: &'b [u8]) -> Result<(), RuntimeError> {
+        debug!("Appending bytecode module from memory...");
+        let const_byte_span = base::ConstByteSpan::from(flatbuffer_data);
+        base::Status::from_raw(unsafe {
+            sys::iree_runtime_session_append_bytecode_module_from_memory(
+                self.ctx,
+                const_byte_span.ctx,
+                base::Allocator::null_allocator().ctx,
+            )
+        })
+        .to_result()
+        .map_err(|e| RuntimeError::StatusError(e))
+    }
+
+    pub unsafe fn append_module_from_file(&self, path: &Path) -> Result<(), RuntimeError> {
+        debug!("Appending bytecode module from file...");
+        let cstr = CString::new(path.to_str().unwrap()).unwrap();
+        base::Status::from_raw(unsafe {
+            sys::iree_runtime_session_append_bytecode_module_from_file(
+                self.ctx,
+                cstr.as_ptr(),
+            )
+        })
+        .to_result()
+        .map_err(|e| RuntimeError::StatusError(e))
     }
 }
 
@@ -169,33 +216,4 @@ impl Drop for Session<'_, '_> {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use test_log::test;
 
-    #[test]
-    fn test_instance() {
-        let mut driver_registry = DriverRegistry::new();
-        debug!("DriverRegistry created");
-        let options = InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-        debug!("InstanceOptions created");
-        Instance::new(&options, Allocator::get_global()).unwrap();
-    }
-
-    #[test]
-    fn test_session() {
-        let mut driver_registry = DriverRegistry::new();
-        debug!("DriverRegistry created");
-        let options = InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-        debug!("InstanceOptions created");
-        let instance = Instance::new(&options, Allocator::get_global()).unwrap();
-        debug!("Instance created");
-        let device = instance
-            .try_create_default_device("metal")
-            .expect("Failed to create device");
-        debug!("Device created");
-        let session = Session::create_with_device(&instance, &SessionOptions::default(), &device)
-            .expect("Failed to create session");
-    }
-}

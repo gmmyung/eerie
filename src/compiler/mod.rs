@@ -1,6 +1,6 @@
 use iree_sys::compiler as sys;
 use std::{
-    ffi::{CStr, CString},
+    ffi::{CStr, CString, c_char},
     fmt::{Debug, Display, Formatter},
     marker::{PhantomData, PhantomPinned},
     os::fd::AsRawFd,
@@ -49,17 +49,6 @@ static IS_INITIALIZED: OnceLock<()> = OnceLock::new();
 
 pub struct Compiler {}
 
-fn convert_argv(argv: Vec<String>) -> Result<Vec<*const i8>, std::ffi::NulError> {
-    let res = argv
-        .iter()
-        .map(|arg| std::ffi::CString::new(arg.as_str()))
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .map(|arg| arg.as_ptr())
-        .collect::<Vec<_>>();
-    Ok(res)
-}
-
 impl Compiler {
     pub fn new() -> Result<Self, CompilerError> {
         match IS_INITIALIZED.set(()) {
@@ -81,12 +70,19 @@ impl Compiler {
     }
 
     pub fn setup_global_cl(&mut self, argv: Vec<String>) -> Result<&mut Self, CompilerError> {
-        let mut argv = convert_argv(argv)?;
+        let c_str_vec = argv
+            .iter()
+            .map(|arg| std::ffi::CString::new(arg.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut ptr_array = c_str_vec
+            .iter()
+            .map(|arg| arg.as_ptr())
+            .collect::<Vec<_>>();
         let banner = std::ffi::CString::new("IREE Compiler")?;
         unsafe {
             sys::ireeCompilerSetupGlobalCL(
                 argv.len() as i32,
-                argv.as_mut_ptr(),
+                ptr_array.as_mut_ptr(),
                 banner.as_ptr(),
                 false,
             )
@@ -186,18 +182,25 @@ impl<'a> Session<'a> {
     }
 
     pub fn set_flags(&mut self, argv: Vec<String>) -> Result<&mut Self, CompilerError> {
-        let mut argv = convert_argv(argv)?;
+        let c_str_vec = argv
+            .iter()
+            .map(|arg| std::ffi::CString::new(arg.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ptr_array = c_str_vec
+            .iter()
+            .map(|arg| arg.as_ptr())
+            .collect::<Vec<_>>();
         let err_ptr: *mut sys::iree_compiler_error_t;
         unsafe {
             debug!("Setting session flags");
             err_ptr =
-                sys::ireeCompilerSessionSetFlags(self.ctx, argv.len() as i32, argv.as_mut_ptr());
+                sys::ireeCompilerSessionSetFlags(self.ctx, argv.len() as i32, ptr_array.as_ptr());
             debug!("Session flags set");
         }
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
 
         // TODO: This Method Does Not work
@@ -312,6 +315,12 @@ impl Display for Diagnostics {
 }
 
 impl std::error::Error for Diagnostics {}
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
+}
 
 impl Diagnostics {
     fn new(data: Vec<Diagnostic>) -> Self {
@@ -488,24 +497,28 @@ impl<'a, 'b> Invocation<'a, 'b> {
     #[allow(clippy::needless_pass_by_ref_mut)]
     pub fn output_ir(&self, output: &mut impl Output) -> Result<&Self, CompilerError> {
         debug!("Outputting IR");
+        self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
         let err_ptr = unsafe { sys::ireeCompilerInvocationOutputIR(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            let diagnostic_queue = self.diagnostic_queue.as_ref().get_ref().clone();
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), diagnostic_queue))
         }
     }
 
     #[allow(clippy::needless_pass_by_ref_mut)]
     pub fn output_vm_byte_code(&self, output: &mut impl Output) -> Result<&Self, CompilerError> {
         debug!("Outputting VM byte code");
+        self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
         let err_ptr = unsafe { sys::ireeCompilerInvocationOutputVMBytecode(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            let diagnostic_queue = self.diagnostic_queue.as_ref().get_ref().clone();
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), diagnostic_queue))
         }
     }
 
@@ -518,7 +531,7 @@ impl<'a, 'b> Invocation<'a, 'b> {
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 }
@@ -564,7 +577,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 _phantom: PhantomData,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 
@@ -594,7 +607,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 _phantom: PhantomData,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 
@@ -626,7 +639,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 _phantom: PhantomData,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 
@@ -671,7 +684,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 })
                 .collect())
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 }
@@ -721,7 +734,7 @@ impl<'a> FileNameOutput<'a> {
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 }
@@ -764,24 +777,23 @@ impl<'a, 'b> FileOutput<'a, 'b> {
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 }
 
-pub struct MemBufferOutput<'a, 'b> {
+pub struct MemBufferOutput<'c> {
     ctx: *mut sys::iree_compiler_output_t,
-    _marker: PhantomData<&'a mut [i8]>,
-    _compiler: &'b Compiler,
+    _compiler: &'c Compiler,
 }
 
-impl Output for MemBufferOutput<'_, '_> {
+impl Output for MemBufferOutput<'_> {
     fn as_ptr(&self) -> *mut sys::iree_compiler_output_t {
         self.ctx
     }
 }
 
-impl Drop for MemBufferOutput<'_, '_> {
+impl Drop for MemBufferOutput<'_> {
     fn drop(&mut self) {
         unsafe {
             debug!("Destroying membuffer output");
@@ -790,23 +802,22 @@ impl Drop for MemBufferOutput<'_, '_> {
     }
 }
 
-impl<'a, 'b> MemBufferOutput<'a, 'b> {
-    pub fn new(compiler: &'b Compiler) -> Result<Self, CompilerError> {
+impl<'c> MemBufferOutput<'c> {
+    pub fn new(compiler: &'c Compiler) -> Result<Self, CompilerError> {
         debug!("Creating membuffer output");
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { sys::ireeCompilerOutputOpenMembuffer(&mut output_ptr) };
         if err_ptr.is_null() {
             Ok(MemBufferOutput {
                 ctx: output_ptr,
-                _marker: PhantomData,
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 
-    pub fn map_memory(&self) -> Result<&'a [i8], CompilerError> {
+    pub fn map_memory<'buf>(&'buf self) -> Result<&'buf [u8], CompilerError> {
         debug!("Mapping membuffer output");
         let mut data_ptr = std::ptr::null_mut();
         let mut data_length = 0;
@@ -814,10 +825,10 @@ impl<'a, 'b> MemBufferOutput<'a, 'b> {
             unsafe { sys::ireeCompilerOutputMapMemory(self.ctx, &mut data_ptr, &mut data_length) };
         if err_ptr.is_null() {
             Ok(unsafe {
-                std::slice::from_raw_parts(data_ptr as *const i8, data_length.try_into().unwrap())
+                std::slice::from_raw_parts(data_ptr as *const u8, data_length.try_into().unwrap())
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr)))
+            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
         }
     }
 }
@@ -830,10 +841,10 @@ pub enum CompilerError {
     NulError(#[from] std::ffi::NulError),
     #[error("Invalid UTF-8 sequence")]
     Utf8Error(#[from] std::str::Utf8Error),
-    #[error(transparent)]
-    IREECompilerError(#[from] Error),
-    #[error(transparent)]
-    IREECompilerDiagnosticsError(#[from] Diagnostics),
+    #[error("IREE compiler error: {0:?} {1:?}")]
+    IREECompilerError(Error, Diagnostics),
+    #[error("IREE compiler error: {0:?}")]
+    IREECompilerDiagnosticsError(Diagnostics),
     #[error("File not found: {0}")]
     FileNotFound(String),
     #[error(transparent)]

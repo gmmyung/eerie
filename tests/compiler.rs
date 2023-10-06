@@ -68,7 +68,7 @@ rusty_fork_test! {
         let flags = Compiler::new()
             .unwrap()
             .create_session()
-            //.set_flags(vec!["--iree-example-flag=false".to_string()])
+            //.set_flags(vec!["--iree-input-type=tosa".to_string()])
             //.unwrap()
             .get_flags(false);
         info!("Flags: {:?}", flags);
@@ -128,5 +128,23 @@ rusty_fork_test! {
         invocation.set_verify_ir(true);
         let source = session.create_source_from_cstr(&source_ir_cstr).unwrap();
         assert!(invocation.parse_source(source).is_err());
+    }
+
+    #[test]
+    fn output_byte_code() {
+        let mut compiler = Compiler::new().unwrap();
+        compiler.setup_global_cl(vec!["--iree-hal-target-backends=llvm-cpu".to_string()]).unwrap();   
+        let mut session = compiler.create_session();
+        session.set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()]).unwrap();
+        let mut invocation = session.create_invocation();
+        invocation.set_verify_ir(true);
+        let source = Source::from_file(&session, Path::new("tests/add.mlir")).unwrap();
+        let mut output = MemBufferOutput::new(&compiler).unwrap();
+        invocation.set_compile_to_phase("end").unwrap();
+        invocation.parse_source(source).unwrap();
+        invocation.pipeline(Pipeline::Std).unwrap();
+        invocation.output_vm_byte_code(&mut output).unwrap();
+        let out_buf = output.map_memory().unwrap();
+        info!("Output: {}", unsafe{std::ffi::CStr::from_ptr(out_buf.as_ptr() as *const i8)}.to_str().unwrap());
     }
 }

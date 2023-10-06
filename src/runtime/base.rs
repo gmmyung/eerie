@@ -35,8 +35,8 @@ impl<'a> From<ByteSpan<'a>> for &'a mut [u8] {
     }
 }
 
-struct ConstByteSpan<'a> {
-    ctx: sys::iree_const_byte_span_t,
+pub struct ConstByteSpan<'a> {
+    pub ctx: sys::iree_const_byte_span_t,
     marker: std::marker::PhantomData<&'a [u8]>,
 }
 
@@ -114,9 +114,34 @@ impl Allocator {
         };
         Self { ctx: allocator }
     }
+
+    pub fn null_allocator() -> Self {
+        let allocator = sys::iree_allocator_t {
+            self_: std::ptr::null_mut(),
+            ctl: Some(null_allocator_ctl)
+        };
+        Self { ctx: allocator }
+    }
 }
 
 const ALIGNMENT: usize = 16;
+
+unsafe extern "C" fn null_allocator_ctl(
+    _self_: *mut c_void,
+    command: sys::iree_allocator_command_e,
+    _params: *const c_void,
+    inout_ptr: *mut *mut c_void,
+) -> sys::iree_status_t {
+    match command {
+        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => { 
+            debug!("null_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE, {:p}", *inout_ptr);
+        }
+        _ => {
+            debug!("null_allocator_ctl: command: {:?}", command);
+        }
+    }
+    std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+}
 
 unsafe extern "C" fn rust_allocator_ctl(
     _self_: *mut c_void,
