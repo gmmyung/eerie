@@ -14,6 +14,7 @@ fn generate_bindings(headers: &[PathBuf], include_path: &PathBuf, bindings_path:
         bindgen::Builder::default()
             .header(include_path.join(path).display().to_string())
             .clang_arg(format!("-I{}", include_path.display()))
+            .derive_default(true)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks))
             .generate()
             .expect("Unable to generate bindings")

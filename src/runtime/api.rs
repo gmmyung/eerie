@@ -1,8 +1,8 @@
-use std::{path::Path, ffi::CString, ptr::null};
+use std::{ffi::CString, path::Path, ptr::null, marker::PhantomData};
 
 use crate::runtime::base::Allocator;
 
-use super::{base::StringView, error::RuntimeError};
+use super::{base::StringView, error::RuntimeError, vm};
 use iree_sys::runtime as sys;
 use tracing::debug;
 
@@ -51,6 +51,7 @@ impl Instance {
             sys::iree_runtime_instance_create(
                 &options.ctx,
                 base::Allocator::get_global().ctx,
+                //Allocator::from_system().ctx,
                 &mut out_ptr as *mut *mut sys::iree_runtime_instance_t,
             )
         })
@@ -77,7 +78,10 @@ impl Instance {
         DriverRegistry { ctx: out_ptr }
     }
 
-    pub fn try_create_default_device(&self, name: &str) -> Result<super::hal::Device, RuntimeError> {
+    pub fn try_create_default_device(
+        &self,
+        name: &str,
+    ) -> Result<super::hal::Device, RuntimeError> {
         let mut out_ptr = std::ptr::null_mut();
         let status = unsafe {
             sys::iree_runtime_instance_try_create_default_device(
@@ -113,7 +117,7 @@ impl Default for SessionOptions {
         let mut options = Self {
             ctx: sys::iree_runtime_session_options_t {
                 context_flags: 0,
-                builtin_modules: 0
+                builtin_modules: 0,
             },
         };
         unsafe {
@@ -123,20 +127,19 @@ impl Default for SessionOptions {
     }
 }
 
-pub struct Session<'a, 'b> {
+pub struct Session<'a> {
     ctx: *mut sys::iree_runtime_session_t,
     _instance: &'a Instance,
-    device_marker: std::marker::PhantomData<&'b mut super::hal::Device>,
 }
 
 // Session is thread-compatible.
-unsafe impl Send for Session<'_, '_> {}
+unsafe impl Send for Session<'_> {}
 
-impl<'a, 'b> Session<'a, 'b> {
+impl<'a> Session<'a> {
     pub fn create_with_device(
         instance: &'a Instance,
         options: &SessionOptions,
-        device: &'b super::hal::Device,
+        device: &'a super::hal::Device,
     ) -> Result<Self, RuntimeError> {
         let mut out_ptr = std::ptr::null_mut();
         let allocator = instance.get_host_allocator();
@@ -155,7 +158,6 @@ impl<'a, 'b> Session<'a, 'b> {
         Ok(Self {
             ctx: out_ptr,
             _instance: instance,
-            device_marker: std::marker::PhantomData,
         })
     }
 
@@ -169,7 +171,6 @@ impl<'a, 'b> Session<'a, 'b> {
     // pub fn get_device_allocator(&self) -> base::Allocator {
     // TODO: implement this
 
-
     pub fn trim(&self) -> Result<(), RuntimeError> {
         debug!("Trimming session...");
         base::Status::from_raw(unsafe { sys::iree_runtime_session_trim(self.ctx) })
@@ -179,8 +180,11 @@ impl<'a, 'b> Session<'a, 'b> {
 
     // pub fn append_module(&self, module: &Module) -> Result<(), RuntimeError> {
     // TODO: implement this
-    
-    pub unsafe fn append_module_from_memory(&self, flatbuffer_data: &'b [u8]) -> Result<(), RuntimeError> {
+
+    pub unsafe fn append_module_from_memory(
+        &self,
+        flatbuffer_data: &'a [u8],
+    ) -> Result<(), RuntimeError> {
         debug!("Appending bytecode module from memory...");
         let const_byte_span = base::ConstByteSpan::from(flatbuffer_data);
         base::Status::from_raw(unsafe {
@@ -198,17 +202,29 @@ impl<'a, 'b> Session<'a, 'b> {
         debug!("Appending bytecode module from file...");
         let cstr = CString::new(path.to_str().unwrap()).unwrap();
         base::Status::from_raw(unsafe {
-            sys::iree_runtime_session_append_bytecode_module_from_file(
-                self.ctx,
-                cstr.as_ptr(),
-            )
+            sys::iree_runtime_session_append_bytecode_module_from_file(self.ctx, cstr.as_ptr())
         })
         .to_result()
         .map_err(|e| RuntimeError::StatusError(e))
     }
+
+    pub fn lookup_function<'f>(&'f self, name: &str) -> Result<vm::Function<'f>, RuntimeError> {
+        debug!("Looking up function...");
+        let function = vm::Function::default();
+        base::Status::from_raw(unsafe {
+            sys::iree_runtime_session_lookup_function(
+                self.ctx,
+                StringView::from(name).ctx,
+                &function.ctx as *const sys::iree_vm_function_t as *mut sys::iree_vm_function_t,
+            )
+        })
+        .to_result()?;
+
+        Ok(function)
+    }
 }
 
-impl Drop for Session<'_, '_> {
+impl Drop for Session<'_> {
     fn drop(&mut self) {
         unsafe {
             sys::iree_runtime_session_release(self.ctx);
@@ -216,4 +232,55 @@ impl Drop for Session<'_, '_> {
     }
 }
 
+pub struct Call<'a> {
+    ctx: sys::iree_runtime_call_t,
+    _marker: PhantomData<&'a Session<'a>>,
+}
 
+// Call is thread-compatible.
+unsafe impl Send for Call<'_> {}
+
+impl<'a> Call<'a> {
+    pub fn new(session: &'a Session, func: &'a vm::Function) -> Result<Self, RuntimeError> {
+        let mut call = Self {
+            ctx: sys::iree_runtime_call_t::default(),
+            _marker: PhantomData,
+        };
+        debug!("call.ctx: {:p}", &call.ctx);
+        base::Status::from_raw(unsafe {
+            debug!("Creating call...");
+            sys::iree_runtime_call_initialize(
+                session.ctx,
+                func.ctx,
+                &mut call.ctx as *mut sys::iree_runtime_call_t,
+            )
+        }).to_result()?;
+        debug!("Call created!");
+        Ok(call)
+    }
+
+    pub fn from_func_name(session: &'a Session, name: &str) -> Result<Self, RuntimeError> {
+        let mut out = std::mem::MaybeUninit::uninit();
+        base::Status::from_raw(unsafe {
+            debug!("Creating call...");
+            sys::iree_runtime_call_initialize_by_name(
+                session.ctx,
+                StringView::from(name).ctx,
+                out.as_mut_ptr(),
+            )
+        }).to_result()?;
+        debug!("Call created!");
+        Ok(Self {
+            ctx: unsafe { out.assume_init() },
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl Drop for Call<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            sys::iree_runtime_call_deinitialize(&mut self.ctx);
+        }
+    }
+}

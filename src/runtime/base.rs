@@ -1,7 +1,4 @@
-use std::{
-    ffi::c_void,
-    fmt::Display,
-};
+use std::{ffi::c_void, fmt::Display};
 
 use iree_sys::runtime as sys;
 use tracing::debug;
@@ -26,12 +23,7 @@ impl<'a> From<&'a mut [u8]> for ByteSpan<'a> {
 
 impl<'a> From<ByteSpan<'a>> for &'a mut [u8] {
     fn from(byte_span: ByteSpan<'a>) -> Self {
-        unsafe {
-            std::slice::from_raw_parts_mut(
-                byte_span.ctx.data,
-                byte_span.ctx.data_length,
-            )
-        }
+        unsafe { std::slice::from_raw_parts_mut(byte_span.ctx.data, byte_span.ctx.data_length) }
     }
 }
 
@@ -55,12 +47,7 @@ impl<'a> From<&'a [u8]> for ConstByteSpan<'a> {
 
 impl<'a> From<ConstByteSpan<'a>> for &'a [u8] {
     fn from(byte_span: ConstByteSpan<'a>) -> Self {
-        unsafe {
-            std::slice::from_raw_parts(
-                byte_span.ctx.data,
-                byte_span.ctx.data_length,
-            )
-        }
+        unsafe { std::slice::from_raw_parts(byte_span.ctx.data, byte_span.ctx.data_length) }
     }
 }
 
@@ -93,7 +80,6 @@ impl<'a> From<StringView<'a>> for &'a str {
     }
 }
 
-
 pub struct Allocator {
     pub(crate) ctx: sys::iree_allocator_t,
 }
@@ -118,7 +104,7 @@ impl Allocator {
     pub fn null_allocator() -> Self {
         let allocator = sys::iree_allocator_t {
             self_: std::ptr::null_mut(),
-            ctl: Some(null_allocator_ctl)
+            ctl: Some(null_allocator_ctl),
         };
         Self { ctx: allocator }
     }
@@ -133,8 +119,11 @@ unsafe extern "C" fn null_allocator_ctl(
     inout_ptr: *mut *mut c_void,
 ) -> sys::iree_status_t {
     match command {
-        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => { 
-            debug!("null_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE, {:p}", *inout_ptr);
+        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
+            debug!(
+                "null_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE, {:p}",
+                *inout_ptr
+            );
         }
         _ => {
             debug!("null_allocator_ctl: command: {:?}", command);
@@ -186,6 +175,15 @@ unsafe extern "C" fn rust_allocator_ctl(
             std::ptr::null_mut() as *mut c_void as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_REALLOC => {
+            if *inout_ptr == std::ptr::null_mut() {
+                // realloc of null is malloc
+                return rust_allocator_ctl(
+                    _self_,
+                    sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_MALLOC,
+                    params,
+                    inout_ptr,
+                );
+            }
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let old_size = unsafe { *(ptr as *mut usize) };
             let new_size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
@@ -211,8 +209,8 @@ unsafe extern "C" fn rust_allocator_ctl(
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let size = unsafe { *(ptr as *mut usize) };
             debug!(
-                "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE: size: {}->{:p}", 
-                size, *inout_ptr 
+                "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE: size: {}->{:p}",
+                size, *inout_ptr
             );
             std::alloc::dealloc(
                 ptr as *mut u8,
@@ -230,9 +228,7 @@ pub struct Status {
 
 impl Status {
     pub(crate) fn from_raw(ctx: sys::iree_status_t) -> Self {
-        Self {
-            ctx,
-        }
+        Self { ctx }
     }
 
     pub(crate) fn from_code(status_kind: StatusErrorKind) -> Self {
@@ -242,7 +238,7 @@ impl Status {
         }
     }
 
-    pub(crate) fn is_ok(&self) -> bool {  
+    pub(crate) fn is_ok(&self) -> bool {
         self.ctx as usize == 0
     }
 
@@ -256,7 +252,7 @@ impl Status {
         if self.is_ok() {
             Ok(())
         } else {
-            Err(StatusError{status: self})
+            Err(StatusError { status: self })
         }
     }
 
