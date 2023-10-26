@@ -3,8 +3,8 @@ use std::{ffi::c_void, fmt::Display};
 use iree_sys::runtime as sys;
 use tracing::debug;
 
-struct ByteSpan<'a> {
-    ctx: sys::iree_byte_span_t,
+pub struct ByteSpan<'a> {
+    pub(crate) ctx: sys::iree_byte_span_t,
     marker: std::marker::PhantomData<&'a mut [u8]>,
 }
 

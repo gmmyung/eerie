@@ -1,13 +1,16 @@
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::Path;
 
-use anyhow::Result;
-use iree_rs::{compiler, runtime};
+use iree_rs::{
+    compiler,
+    runtime::{
+        self,
+        hal::{BufferView, EncodingType},
+        vm::{List, ToRef, ToValue, Value},
+    },
+};
 use rusty_fork::rusty_fork_test;
 use test_log::test;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[test]
 fn test_instance() {
@@ -41,13 +44,66 @@ fn test_session() {
     session.trim().expect("Failed to trim session");
 }
 
+#[test]
+fn dynamic_list() {
+    let instance = runtime::api::Instance::new(
+        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
+            .use_all_available_drivers(),
+    )
+    .unwrap();
+    let list = runtime::vm::DynamicList::<Value<i32>>::new(4, &instance).unwrap();
+    list.push_value(1.to_value()).unwrap();
+    list.push_value(2.to_value()).unwrap();
+    list.push_value(3.to_value()).unwrap();
+    list.push_value(4.to_value()).unwrap();
+    let val = list.get_value::<i32>(0).unwrap();
+    drop(list);
+    assert_eq!(val.from_value(), 1);
+}
+
+#[test]
+fn ref_list() {
+    let instance = runtime::api::Instance::new(
+        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
+            .use_all_available_drivers(),
+    )
+    .unwrap();
+    let device = instance
+        .try_create_default_device("local-sync")
+        .expect("Failed to create device");
+    let session = runtime::api::Session::create_with_device(
+        &instance,
+        &runtime::api::SessionOptions::default(),
+        &device,
+    )
+    .unwrap();
+    let list =
+        runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(4, &instance).unwrap();
+    let buffer = BufferView::<f32>::new(
+        &session,
+        &[2, 2],
+        runtime::hal::EncodingType::DenseRowMajor,
+        &[1.0, 2.0, 3.0, 4.0],
+    )
+    .unwrap();
+    info!("buffer: {:?}", buffer);
+    info!("he");
+    let buffer_ref = buffer.to_ref(&instance).unwrap();
+    info!("buffer ref created");
+    list.push_ref(&buffer_ref).unwrap();
+    list.push_ref(&buffer_ref).unwrap();
+
+    info!("helloi");
+    info!("buffer: {:?}", buffer);
+}
+
 rusty_fork_test! {
     #[test]
     fn append_module() {
         let compiler = compiler::Compiler::new().unwrap();
         let mut compiler_session = compiler.create_session();
         compiler_session
-            .set_flags(vec!["--iree-hal-target-backends=metal".to_string()]).unwrap();
+            .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()]).unwrap();
         let source = compiler_session
             .create_source_from_file(Path::new("tests/add.mlir")).unwrap();
         let mut invocation = compiler_session.create_invocation();
@@ -65,7 +121,7 @@ rusty_fork_test! {
             runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
         let instance = runtime::api::Instance::new(&options).unwrap();
         let device = instance
-            .try_create_default_device("metal")
+            .try_create_default_device("local-sync")
             .expect("Failed to create device");
         let session = runtime::api::Session::create_with_device(
             &instance,
@@ -75,10 +131,22 @@ rusty_fork_test! {
 
         unsafe { session.append_module_from_memory(vmfb) }.unwrap();
 
-        let func = session.lookup_function("arithmetic.simple_add").unwrap();
+        let func = session.lookup_function("arithmetic.simple_mul").unwrap();
         debug!("Function found!");
 
-        let call = runtime::api::Call::new(&session, &func).unwrap();
-        //let call = runtime::api::Call::from_func_name(&session, "arithmetic.simple_add").unwrap();
+        let mut call = runtime::api::Call::new(&session, &func).unwrap();
+
+        let input = BufferView::<f32>::new(&session, &[4], EncodingType::DenseRowMajor, &[1.,2.,3.,4.]).unwrap();
+
+        info!("Input: {:?}", input);
+
+        call.inputs_push_back_buffer_view(&input).unwrap();
+        call.inputs_push_back_buffer_view(&input).unwrap();
+
+        call.invoke().unwrap();
+
+        let output = call.outputs_pop_front_buffer_view::<f32>().unwrap();
+
+        info!("Output: {:?}", output);
     }
 }

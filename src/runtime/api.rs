@@ -1,11 +1,7 @@
-use std::{ffi::CString, path::Path, ptr::null, marker::PhantomData};
-
-use crate::runtime::base::Allocator;
-
-use super::{base::StringView, error::RuntimeError, vm};
+use std::{ffi::CString, marker::PhantomData, path::Path};
+use super::{base::StringView, error::RuntimeError, vm, hal::{BufferView, ToElementType}};
 use iree_sys::runtime as sys;
 use tracing::debug;
-
 use super::{base, hal::DriverRegistry};
 
 pub struct InstanceOptions<'a> {
@@ -60,7 +56,7 @@ impl Instance {
         Ok(Self { ctx: out_ptr })
     }
 
-    fn get_host_allocator(&self) -> base::Allocator {
+    pub(crate) fn get_host_allocator(&self) -> base::Allocator {
         let out_ptr = unsafe { sys::iree_runtime_instance_host_allocator(self.ctx) };
         base::Allocator {
             ctx: sys::iree_allocator_t {
@@ -72,6 +68,16 @@ impl Instance {
 
     // pub fn get_vm_instance(&self) -> vm::Instance {
     // TODO: implement this
+    
+    pub(crate) fn get_vm_instance(&self) -> *mut sys::iree_vm_instance_t {
+        let out_ptr = unsafe { sys::iree_runtime_instance_vm_instance(self.ctx) };
+        out_ptr
+    }
+
+    pub(crate) fn lookup_type(&self, full_name: StringView) -> sys::iree_vm_ref_type_t {
+        let vm_instance = self.get_vm_instance();
+        unsafe { sys::iree_vm_instance_lookup_type(vm_instance, full_name.ctx) }
+    }
 
     fn get_driver_registry(&self) -> DriverRegistry {
         let out_ptr = unsafe { sys::iree_runtime_instance_driver_registry(self.ctx) };
@@ -94,7 +100,7 @@ impl Instance {
         base::Status::from_raw(status)
             .to_result()
             .map_err(|e| RuntimeError::StatusError(e))?;
-        Ok(super::hal::Device { ctx: out_ptr })
+        Ok(super::hal::Device { ctx: out_ptr, marker: PhantomData })
     }
 }
 
@@ -128,7 +134,7 @@ impl Default for SessionOptions {
 }
 
 pub struct Session<'a> {
-    ctx: *mut sys::iree_runtime_session_t,
+    pub(crate) ctx: *mut sys::iree_runtime_session_t,
     _instance: &'a Instance,
 }
 
@@ -161,15 +167,10 @@ impl<'a> Session<'a> {
         })
     }
 
-    fn get_allocator(&self) -> base::Allocator {
+    pub(crate) fn get_allocator(&self) -> base::Allocator {
         let out = unsafe { sys::iree_runtime_session_host_allocator(self.ctx) };
         base::Allocator { ctx: out }
     }
-
-    // pub fn get_device(&self) -> super::hal::Device {
-    //
-    // pub fn get_device_allocator(&self) -> base::Allocator {
-    // TODO: implement this
 
     pub fn trim(&self) -> Result<(), RuntimeError> {
         debug!("Trimming session...");
@@ -254,7 +255,8 @@ impl<'a> Call<'a> {
                 func.ctx,
                 &mut call.ctx as *mut sys::iree_runtime_call_t,
             )
-        }).to_result()?;
+        })
+        .to_result()?;
         debug!("Call created!");
         Ok(call)
     }
@@ -268,12 +270,43 @@ impl<'a> Call<'a> {
                 StringView::from(name).ctx,
                 out.as_mut_ptr(),
             )
-        }).to_result()?;
+        })
+        .to_result()?;
         debug!("Call created!");
         Ok(Self {
             ctx: unsafe { out.assume_init() },
             _marker: PhantomData,
         })
+    }
+
+    pub fn invoke(&mut self) -> Result<(), RuntimeError> {
+        // TODO: Call flags interface, not fixed to 0
+        base::Status::from_raw(unsafe { sys::iree_runtime_call_invoke(&mut self.ctx, 0) })
+            .to_result()
+            .map_err(|e| RuntimeError::StatusError(e))
+    }
+
+    pub fn inputs_push_back_buffer_view<T: ToElementType>(&mut self, buffer_view: &BufferView<'a, T>) -> Result<(), RuntimeError> {
+        base::Status::from_raw(unsafe {
+            sys::iree_runtime_call_inputs_push_back_buffer_view(
+                &mut self.ctx,
+                buffer_view.ctx,
+            )
+        })
+        .to_result()?;
+        Ok(())
+    }
+
+    pub fn outputs_pop_front_buffer_view<T: ToElementType>(&mut self) -> Result<BufferView<'_, T>, RuntimeError> {
+        let mut out = std::mem::MaybeUninit::uninit();
+        base::Status::from_raw(unsafe {
+            sys::iree_runtime_call_outputs_pop_front_buffer_view(
+                &mut self.ctx,
+                out.as_mut_ptr(),
+            )
+        })
+        .to_result()?;
+        Ok(unsafe { BufferView::from_ptr(out.assume_init()) })
     }
 }
 
