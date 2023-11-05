@@ -1,5 +1,5 @@
 [package]
-name = "iree-rs"
+name = "eerie"
 version = "0.1.0"
 edition = "2021"
 
@@ -25,3 +25,9 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
 default = ["runtime", "compiler"]
 runtime = ["iree-sys/runtime"]
 compiler = ["iree-sys/from-python"]
+
+[[example]]
+name = "resnet"
+test = false
+bench = true
+

@@ -1,27 +1,37 @@
+use std::ops::Deref;
+
 use iree_sys::runtime as sys;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::{
-    api::Instance,
+    api::{Instance, self},
     base::{self, ByteSpan},
-    error::RuntimeError,
+    error::RuntimeError, hal::{BufferView, ToElementType},
 };
 
 pub struct Function<'a> {
     pub(crate) ctx: sys::iree_vm_function_t,
-    _marker: std::marker::PhantomData<&'a ()>,
+    pub(crate) session: &'a api::Session<'a>,
 }
 
-impl Default for Function<'_> {
-    fn default() -> Self {
-        Self {
-            ctx: sys::iree_vm_function_t {
-                module: std::ptr::null_mut(),
-                linkage: 0,
-                ordinal: 0,
-            },
-            _marker: std::marker::PhantomData,
-        }
+
+impl<'a> Function<'a> {
+    pub fn invoke<T1, T2>(&self, input_list: &impl List<T1>, output_list: &impl List<T2>) 
+        -> Result<(), RuntimeError>
+        where T1: Type, T2: Type
+    {
+        base::Status::from_raw(unsafe {
+            sys::iree_vm_invoke(
+                self.session.context(),
+                self.ctx,
+                sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
+                std::ptr::null_mut(),
+                input_list.to_raw(),
+                output_list.to_raw(),
+                self.session.get_allocator().ctx
+            )
+        }).to_result()?;
+        Ok(())
     }
 }
 
@@ -206,6 +216,15 @@ impl<T: ToRef> Drop for Ref<'_, T> {
     }
 }
 
+impl<'a, T: ToElementType> Ref<'a, BufferView<'a, T>> {
+    pub fn to_buffer_view(&self) -> BufferView<'a, T> {
+        BufferView {
+            ctx: self.ctx.ptr as *mut sys::iree_hal_buffer_view_t,
+            marker: std::marker::PhantomData,
+        }
+    } 
+}
+
 pub trait ToRef: Sized {
     fn to_ref(&self, instance: &Instance) -> Result<Ref<Self>, RuntimeError>;
     fn to_ref_type(instance: &Instance) -> sys::iree_vm_ref_type_t;
@@ -254,6 +273,16 @@ pub trait List<T: Type> {
         let status = unsafe { sys::iree_vm_list_push_ref_retain(self.to_raw(), &value.ctx) };
         base::Status::from_raw(status).to_result()?;
         Ok(())
+    }
+
+    fn get_ref<A: ToRef>(&self, idx: usize) -> Result<Ref<A>, RuntimeError> {
+        let mut out = sys::iree_vm_ref_t::default();
+        let status = unsafe { sys::iree_vm_list_get_ref_retain(self.to_raw(), idx, &mut out) };
+        base::Status::from_raw(status).to_result()?;
+        Ok(Ref {
+            ctx: out,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
@@ -359,7 +388,7 @@ impl<'a, T: Type> List<T> for DynamicList<'a, T> {
     }
 
     fn instance(&self) -> &'a super::api::Instance {
-        todo!()
+        self._instance
     }
 }
 

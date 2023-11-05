@@ -1,6 +1,6 @@
 use iree_sys::compiler as sys;
 use std::{
-    ffi::{CStr, CString, c_char},
+    ffi::{CStr, CString},
     fmt::{Debug, Display, Formatter},
     marker::{PhantomData, PhantomPinned},
     os::fd::AsRawFd,
@@ -255,6 +255,13 @@ impl<'a> Session<'a> {
         buffer: &'c CStr,
     ) -> Result<Source<'a, '_, 'c>, CompilerError> {
         Source::from_cstr(self, buffer)
+    }
+
+    pub fn create_source_from_buf<'c>(
+        &'a self,
+        buffer: &'c [u8],
+    ) -> Result<Source<'a, '_, 'c>, CompilerError> {
+        Source::from_buf(self, buffer)
     }
 }
 
@@ -581,37 +588,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
         }
     }
 
-    pub fn wrap_buffer(
-        session: &'a Session<'b>,
-        buf: &'c [u8],
-        len: usize,
-        nullterm: bool,
-    ) -> Result<Self, CompilerError> {
-        debug!("Creating source from buffer");
-        let buf_name = CString::new("buffer")?;
-        let mut source_ptr = std::ptr::null_mut();
-        let err_ptr = unsafe {
-            sys::ireeCompilerSourceWrapBuffer(
-                session.ctx,
-                buf_name.as_ptr(),
-                buf.as_ptr() as *const i8,
-                len,
-                nullterm,
-                &mut source_ptr,
-            )
-        };
-        if err_ptr.is_null() {
-            Ok(Source {
-                ctx: source_ptr,
-                session,
-                _phantom: PhantomData,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
-        }
-    }
-
-    fn from_buffer(
+    fn wrap_buffer(
         session: &'a Session<'b>,
         buf: &'c [u8],
         nullterm: bool,
@@ -645,7 +622,12 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
 
     pub fn from_cstr(session: &'a Session<'b>, cstr: &'c CStr) -> Result<Self, CompilerError> {
         debug!("Creating source from CStr");
-        Self::from_buffer(session, cstr.to_bytes_with_nul(), true)
+        Self::wrap_buffer(session, cstr.to_bytes_with_nul(), true)
+    }
+
+    pub fn from_buf(session: &'a Session<'b>, buf: &'c [u8]) -> Result<Self, CompilerError> {
+        debug!("Creating source from buffer");
+        Self::wrap_buffer(session, buf, false)
     }
 
     extern "C" fn split_callback(

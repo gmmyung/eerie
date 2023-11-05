@@ -211,17 +211,24 @@ impl<'a> Session<'a> {
 
     pub fn lookup_function<'f>(&'f self, name: &str) -> Result<vm::Function<'f>, RuntimeError> {
         debug!("Looking up function...");
-        let function = vm::Function::default();
+        let mut out = std::mem::MaybeUninit::<sys::iree_vm_function_t>::uninit();
         base::Status::from_raw(unsafe {
             sys::iree_runtime_session_lookup_function(
                 self.ctx,
                 StringView::from(name).ctx,
-                &function.ctx as *const sys::iree_vm_function_t as *mut sys::iree_vm_function_t,
+                out.as_mut_ptr(),
             )
         })
         .to_result()?;
 
-        Ok(function)
+        Ok(vm::Function {
+            ctx: unsafe { out.assume_init() },
+            session: self,
+        })
+    }
+
+    pub(crate) fn context(&self) -> *mut sys::iree_vm_context_t {
+        unsafe { sys::iree_runtime_session_context(self.ctx) }
     }
 }
 

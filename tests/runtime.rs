@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use iree_rs::{
+use eerie::{
     compiler,
     runtime::{
         self,
-        hal::{BufferView, EncodingType},
+        hal::{BufferView, EncodingType, BufferMapping},
         vm::{List, ToRef, ToValue, Value},
     },
 };
@@ -69,7 +69,7 @@ fn ref_list() {
     )
     .unwrap();
     let device = instance
-        .try_create_default_device("local-sync")
+        .try_create_default_device("local-task")
         .expect("Failed to create device");
     let session = runtime::api::Session::create_with_device(
         &instance,
@@ -87,66 +87,98 @@ fn ref_list() {
     )
     .unwrap();
     info!("buffer: {:?}", buffer);
-    info!("he");
     let buffer_ref = buffer.to_ref(&instance).unwrap();
-    info!("buffer ref created");
     list.push_ref(&buffer_ref).unwrap();
     list.push_ref(&buffer_ref).unwrap();
+    let buffer_ref_2: runtime::vm::Ref<BufferView<f32>> = list.get_ref(0).unwrap();
+    info!("buffer_ref_2: {:?}", buffer_ref_2.to_buffer_view());
 
-    info!("helloi");
-    info!("buffer: {:?}", buffer);
+    let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view()).unwrap();
+    info!("mapping: {:?}", mapping.data());
 }
+#[test]
+fn append_module() {
+    let compiler = compiler::Compiler::new().unwrap();
+    let mut compiler_session = compiler.create_session();
+    compiler_session
+        .set_flags(vec!["--iree-hal-target-backends=metal".to_string()])
+        .unwrap();
+    let source = compiler_session
+        .create_source_from_file(Path::new("tests/add.mlir"))
+        .unwrap();
+    let mut invocation = compiler_session.create_invocation();
+    let mut output = compiler::MemBufferOutput::new(&compiler).unwrap();
+    invocation
+        .parse_source(source)
+        .unwrap()
+        .set_verify_ir(true)
+        .set_compile_to_phase("end")
+        .unwrap()
+        .pipeline(compiler::Pipeline::Std)
+        .unwrap()
+        .output_vm_byte_code(&mut output)
+        .unwrap();
+    let vmfb = output.map_memory().unwrap();
 
-rusty_fork_test! {
-    #[test]
-    fn append_module() {
-        let compiler = compiler::Compiler::new().unwrap();
-        let mut compiler_session = compiler.create_session();
-        compiler_session
-            .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()]).unwrap();
-        let source = compiler_session
-            .create_source_from_file(Path::new("tests/add.mlir")).unwrap();
-        let mut invocation = compiler_session.create_invocation();
-        let mut output = compiler::MemBufferOutput::new(&compiler).unwrap();
-        invocation
-            .parse_source(source).unwrap()
-            .set_verify_ir(true)
-            .set_compile_to_phase("end").unwrap()
-            .pipeline(compiler::Pipeline::Std).unwrap()
-            .output_vm_byte_code(&mut output).unwrap();
-        let vmfb = output.map_memory().unwrap();
+    let mut driver_registry = runtime::hal::DriverRegistry::new();
+    let options =
+        runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
+    let instance = runtime::api::Instance::new(&options).unwrap();
+    let device = instance
+        .try_create_default_device("metal")
+        .expect("Failed to create device");
+    let session = runtime::api::Session::create_with_device(
+        &instance,
+        &runtime::api::SessionOptions::default(),
+        &device,
+    )
+    .unwrap();
 
-        let mut driver_registry = runtime::hal::DriverRegistry::new();
-        let options =
-            runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-        let instance = runtime::api::Instance::new(&options).unwrap();
-        let device = instance
-            .try_create_default_device("local-sync")
-            .expect("Failed to create device");
-        let session = runtime::api::Session::create_with_device(
-            &instance,
-            &runtime::api::SessionOptions::default(),
-            &device,
-        ).unwrap();
+    unsafe { session.append_module_from_memory(vmfb) }.unwrap();
 
-        unsafe { session.append_module_from_memory(vmfb) }.unwrap();
+    let func = session.lookup_function("arithmetic.simple_mul").unwrap();
+    debug!("Function found!");
 
-        let func = session.lookup_function("arithmetic.simple_mul").unwrap();
-        debug!("Function found!");
+    let mut call = runtime::api::Call::new(&session, &func).unwrap();
+    let vec = Vec::from_iter((0..100).map(|i| i as f32));
 
-        let mut call = runtime::api::Call::new(&session, &func).unwrap();
+    let input = BufferView::<f32>::new(
+        &session,
+        &[100],
+        EncodingType::DenseRowMajor,
+        vec.as_slice(),
+    )
+    .unwrap();
 
-        let input = BufferView::<f32>::new(&session, &[4], EncodingType::DenseRowMajor, &[1.,2.,3.,4.]).unwrap();
+    info!("Input: {:?}", input);
 
-        info!("Input: {:?}", input);
+    call.inputs_push_back_buffer_view(&input).unwrap();
+    call.inputs_push_back_buffer_view(&input).unwrap();
 
-        call.inputs_push_back_buffer_view(&input).unwrap();
-        call.inputs_push_back_buffer_view(&input).unwrap();
+    call.invoke().unwrap();
 
-        call.invoke().unwrap();
+    let output = call.outputs_pop_front_buffer_view::<f32>().unwrap();
 
-        let output = call.outputs_pop_front_buffer_view::<f32>().unwrap();
+    info!("Output: {:?}", output);
 
-        info!("Output: {:?}", output);
-    }
+    let input = BufferView::<f32>::new(
+        &session,
+        &[100],
+        EncodingType::DenseRowMajor,
+        vec.as_slice(),
+    ).unwrap();
+    let input_list =
+        runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(1, &instance).unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    let output_list = runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(0, &instance).unwrap();
+    let function = session.lookup_function("arithmetic.simple_mul").unwrap();
+    function.invoke(&input_list, &output_list).unwrap();
+    let output = output_list.get_ref(0).unwrap();
+    let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view()).unwrap();
+    info!("Output: {:?}", output_mapping.data());
 }

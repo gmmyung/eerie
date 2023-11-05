@@ -1,4 +1,4 @@
-use iree_rs::compiler::*;
+use eerie::compiler::*;
 use rusty_fork::rusty_fork_test;
 use std::path::Path;
 use test_log::test;

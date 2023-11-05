@@ -5,7 +5,7 @@ use tracing::debug;
 
 use super::{
     api::{self, Instance},
-    base::{self, ConstByteSpan, StringView},
+    base::{self, ConstByteSpan},
     error::RuntimeError,
     vm::{Ref, ToRef},
 };
@@ -157,7 +157,7 @@ impl_to_element_type!(bool, Bool8);
 
 pub struct BufferView<'a, T: ToElementType> {
     pub(crate) ctx: *mut sys::iree_hal_buffer_view_t,
-    marker: std::marker::PhantomData<(&'a api::Session<'a>, T)>,
+    pub(crate) marker: std::marker::PhantomData<(&'a api::Session<'a>, T)>,
 }
 
 impl<'a, T: ToElementType> BufferView<'a, T> {
@@ -209,6 +209,14 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
             marker: std::marker::PhantomData,
         }
     }
+
+    pub(crate) fn get_buffer(&self) -> *mut sys::iree_hal_buffer_t {
+        unsafe { sys::iree_hal_buffer_view_buffer(self.ctx) }
+    }
+
+    pub fn byte_length(&self) -> usize {
+        unsafe { sys::iree_hal_buffer_view_byte_length(self.ctx) }
+    }
 }
 
 impl<T: ToElementType> Debug for BufferView<'_, T> {
@@ -248,6 +256,7 @@ impl<T: ToElementType> ToRef for BufferView<'_, T> {
             )
         })
         .to_result()?;
+        debug!("BufferView ref: {:?}", unsafe { out.assume_init() });
         Ok(Ref {
             ctx: unsafe { out.assume_init() },
             _marker: std::marker::PhantomData,
@@ -256,5 +265,51 @@ impl<T: ToElementType> ToRef for BufferView<'_, T> {
 
     fn to_ref_type(instance: &Instance) -> sys::iree_vm_ref_type_t {
         instance.lookup_type("hal.buffer_view".into())
+    }
+}
+
+pub struct BufferMapping<'a, T: ToElementType> {
+    ctx: sys::iree_hal_buffer_mapping_t,
+    marker: std::marker::PhantomData<&'a T>,
+}
+
+
+
+impl<'a, T: ToElementType> BufferMapping<'a, T> {
+    pub fn new(buffer_view: BufferView<'a, T>) -> Result<Self, RuntimeError> {
+        let mut out = std::mem::MaybeUninit::<sys::iree_hal_buffer_mapping_t>::uninit();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_buffer_map_range(
+                buffer_view.get_buffer(),
+                sys::iree_hal_mapping_mode_bits_t_IREE_HAL_MAPPING_MODE_SCOPED,
+                sys::iree_hal_memory_access_bits_t_IREE_HAL_MEMORY_ACCESS_READ as u16,
+                0,
+                buffer_view.byte_length(),
+                out.as_mut_ptr(),
+            )
+        })
+        .to_result()?;
+        Ok(Self {
+            ctx: unsafe { out.assume_init() },
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    pub fn data(&self) -> &'a [T] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self.ctx.contents.data as *const T,
+                self.ctx.contents.data_length / std::mem::size_of::<T>(),
+            )
+        }
+    }
+}
+
+impl<T: ToElementType> Drop for BufferMapping<'_, T> {
+    fn drop(&mut self) {
+        unsafe {
+            debug!("Releasing BufferMapping...");
+            sys::iree_hal_buffer_unmap_range(&mut self.ctx);
+        }
     }
 }

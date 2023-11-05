@@ -97,6 +97,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "eerie"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iree-sys",
+ "rusty-fork",
+ "test-log",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -148,19 +161,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5444c27eef6923071f7ebcc33e3444508466a76f7a2b93da00ed6e19f30c1ddb"
 dependencies = [
  "windows-sys",
-]
-
-[[package]]
-name = "iree-rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "iree-sys",
- "rusty-fork",
- "test-log",
- "thiserror",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
