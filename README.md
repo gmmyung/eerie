@@ -25,6 +25,7 @@ module @arithmetic {
 ```rust
 fn output_vmfb() -> Vec<u8> {
     use eerie::compiler::*;
+    use std::path::Path;
     let compiler = Compiler::new().unwrap();
     let mut session = compiler.create_session();
     session
@@ -50,8 +51,9 @@ fn output_vmfb() -> Vec<u8> {
 ```
 Running the tensor operation in a IREE runtime environment
 ```rust
-fn run_vmfb() -> Vec<f32> {
+fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     use eerie::runtime::*;
+    use eerie::runtime::vm::{List, ToRef};
     let instance = api::Instance::new(
         &api::InstanceOptions::new(&mut hal::DriverRegistry::new())
             .use_all_available_drivers(),
@@ -66,28 +68,28 @@ fn run_vmfb() -> Vec<f32> {
         &device,
     )
     .unwrap();
-    unsafe { session.apend_module_from_memory(vmfb) }.unwrap();
+    unsafe { session.append_module_from_memory(vmfb) }.unwrap();
     let function = session.lookup_function("arithmetic.simple_mul").unwrap();
     let input_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
         2, &instance,
         )
-        .unwrap()
+        .unwrap();
     let input_buffer = hal::BufferView::<f32>::new(
         &session,
         &[4],
         hal::EncodingType::DenseRowMajor,
         &[1.0, 2.0, 3.0, 4.0]
-    )
+    ).unwrap();
     let input_buffer_ref = input_buffer.to_ref(&instance).unwrap();
     input_list.push_ref(&input_buffer_ref).unwrap();
     let output_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
         1, &instance,
         )
-        .unwrap()
+        .unwrap();
     function.invoke(&input_list, &output_list).unwrap();
     let output_buffer_ref = output_list.get_ref(0).unwrap();
-    let output_buffer: BufferView<f32> = output_buffer_ref.to_buffer_view();
-    let output_mapping = BufferMapping::new(output_buffer).unwrap();
+    let output_buffer: hal::BufferView<f32> = output_buffer_ref.to_buffer_view(&session);
+    let output_mapping = hal::BufferMapping::new(output_buffer).unwrap();
     let out = output_mapping.data().to_vec();
     out
 }

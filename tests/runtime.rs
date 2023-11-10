@@ -91,9 +91,9 @@ fn ref_list() {
     list.push_ref(&buffer_ref).unwrap();
     list.push_ref(&buffer_ref).unwrap();
     let buffer_ref_2: runtime::vm::Ref<BufferView<f32>> = list.get_ref(0).unwrap();
-    info!("buffer_ref_2: {:?}", buffer_ref_2.to_buffer_view());
+    info!("buffer_ref_2: {:?}", buffer_ref_2.to_buffer_view(&session));
 
-    let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view()).unwrap();
+    let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view(&session)).unwrap();
     info!("mapping: {:?}", mapping.data());
 }
 #[test]
@@ -179,6 +179,6 @@ fn append_module() {
     let function = session.lookup_function("arithmetic.simple_mul").unwrap();
     function.invoke(&input_list, &output_list).unwrap();
     let output = output_list.get_ref(0).unwrap();
-    let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view()).unwrap();
+    let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
     info!("Output: {:?}", output_mapping.data());
 }

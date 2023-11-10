@@ -56,6 +56,17 @@ pub struct StringView<'a> {
     marker: std::marker::PhantomData<&'a mut str>,
 }
 
+impl Display for StringView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                self.ctx.data as *const u8,
+                self.ctx.size,
+            ))
+        })
+    }
+}
+
 impl<'a> From<&'a str> for StringView<'a> {
     fn from(s: &'a str) -> Self {
         let string_view = sys::iree_string_view_t {
@@ -80,7 +91,7 @@ impl<'a> From<StringView<'a>> for &'a str {
     }
 }
 
-pub struct Allocator {
+pub(crate) struct Allocator {
     pub(crate) ctx: sys::iree_allocator_t,
 }
 

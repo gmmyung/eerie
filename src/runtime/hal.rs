@@ -157,7 +157,8 @@ impl_to_element_type!(bool, Bool8);
 
 pub struct BufferView<'a, T: ToElementType> {
     pub(crate) ctx: *mut sys::iree_hal_buffer_view_t,
-    pub(crate) marker: std::marker::PhantomData<(&'a api::Session<'a>, T)>,
+    pub(crate) session: &'a api::Session<'a>,
+    pub(crate) marker: std::marker::PhantomData<T>,
 }
 
 impl<'a, T: ToElementType> BufferView<'a, T> {
@@ -199,13 +200,18 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
         .to_result()?;
         Ok(Self {
             ctx: out_ptr,
+            session,
             marker: std::marker::PhantomData,
         })
     }
 
-    pub(crate) unsafe fn from_ptr(ctx: *mut sys::iree_hal_buffer_view_t) -> Self {
+    pub(crate) unsafe fn from_ptr(
+        ctx: *mut sys::iree_hal_buffer_view_t,
+        session: &'a api::Session,
+    ) -> Self {
         Self {
             ctx,
+            session,
             marker: std::marker::PhantomData,
         }
     }
@@ -245,8 +251,8 @@ impl<T: ToElementType> Drop for BufferView<'_, T> {
     }
 }
 
-impl<T: ToElementType> ToRef for BufferView<'_, T> {
-    fn to_ref(&self, instance: &Instance) -> Result<Ref<Self>, RuntimeError> {
+impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
+    fn to_ref(&'a self, instance: &'a Instance) -> Result<Ref<'a, Self>, RuntimeError> {
         let mut out = core::mem::MaybeUninit::<sys::iree_vm_ref_t>::zeroed();
         base::Status::from_raw(unsafe {
             sys::iree_vm_ref_wrap_retain(
@@ -259,6 +265,7 @@ impl<T: ToElementType> ToRef for BufferView<'_, T> {
         debug!("BufferView ref: {:?}", unsafe { out.assume_init() });
         Ok(Ref {
             ctx: unsafe { out.assume_init() },
+            instance: instance,
             _marker: std::marker::PhantomData,
         })
     }
@@ -272,8 +279,6 @@ pub struct BufferMapping<'a, T: ToElementType> {
     ctx: sys::iree_hal_buffer_mapping_t,
     marker: std::marker::PhantomData<&'a T>,
 }
-
-
 
 impl<'a, T: ToElementType> BufferMapping<'a, T> {
     pub fn new(buffer_view: BufferView<'a, T>) -> Result<Self, RuntimeError> {

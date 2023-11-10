@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 use eerie::runtime::{
     hal::{BufferMapping, BufferView},
@@ -86,7 +83,7 @@ fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
         .unwrap();
     function.invoke(&input_list, &output_list).unwrap();
     let output_buffer_ref = output_list.get_ref(0).unwrap();
-    let output_buffer: BufferView<f32> = output_buffer_ref.to_buffer_view();
+    let output_buffer: BufferView<f32> = output_buffer_ref.to_buffer_view(&session);
     let output_mapping = BufferMapping::new(output_buffer).unwrap();
     let out = output_mapping.data().to_vec();
     out
