@@ -4,7 +4,7 @@ use eerie::{
     compiler,
     runtime::{
         self,
-        hal::{BufferView, EncodingType, BufferMapping},
+        hal::{BufferMapping, BufferView, EncodingType},
         vm::{List, ToRef, ToValue, Value},
     },
 };
@@ -96,6 +96,8 @@ fn ref_list() {
     let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view(&session)).unwrap();
     info!("mapping: {:?}", mapping.data());
 }
+
+rusty_fork_test! {
 #[test]
 fn append_module() {
     let compiler = compiler::Compiler::new().unwrap();
@@ -181,4 +183,5 @@ fn append_module() {
     let output = output_list.get_ref(0).unwrap();
     let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
     info!("Output: {:?}", output_mapping.data());
+}
 }

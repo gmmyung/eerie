@@ -1,7 +1,7 @@
 use std::{ffi::c_void, fmt::Display};
 
 use iree_sys::runtime as sys;
-use tracing::debug;
+use tracing::trace;
 
 pub struct ByteSpan<'a> {
     pub(crate) ctx: sys::iree_byte_span_t,
@@ -96,14 +96,6 @@ pub(crate) struct Allocator {
 }
 
 impl Allocator {
-    pub unsafe fn from_system() -> Self {
-        let allocator = sys::iree_allocator_t {
-            self_: std::ptr::null_mut(),
-            ctl: Some(sys::iree_allocator_system_ctl),
-        };
-        Self { ctx: allocator }
-    }
-
     pub fn get_global() -> Self {
         let allocator = sys::iree_allocator_t {
             self_: std::ptr::null_mut(),
@@ -131,13 +123,13 @@ unsafe extern "C" fn null_allocator_ctl(
 ) -> sys::iree_status_t {
     match command {
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
-            debug!(
+            trace!(
                 "null_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE, {:p}",
                 *inout_ptr
             );
         }
         _ => {
-            debug!("null_allocator_ctl: command: {:?}", command);
+            trace!("null_allocator_ctl: command: {:?}", command);
         }
     }
     std::ptr::null_mut() as *mut c_void as sys::iree_status_t
@@ -162,7 +154,7 @@ unsafe extern "C" fn rust_allocator_ctl(
             ));
             *(ptr as *mut usize) = size;
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
-            debug!(
+            trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_MALLOC: size: {} -> {:?}",
                 size, *inout_ptr
             );
@@ -179,7 +171,7 @@ unsafe extern "C" fn rust_allocator_ctl(
             ));
             *(ptr as *mut usize) = size;
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
-            debug!(
+            trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_CALLOC: size: {} -> {:?}",
                 size, *inout_ptr
             );
@@ -198,7 +190,7 @@ unsafe extern "C" fn rust_allocator_ctl(
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let old_size = unsafe { *(ptr as *mut usize) };
             let new_size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            debug!(
+            trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_REALLOC: {} -> {}",
                 old_size, new_size
             );
@@ -219,7 +211,7 @@ unsafe extern "C" fn rust_allocator_ctl(
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let size = unsafe { *(ptr as *mut usize) };
-            debug!(
+            trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE: size: {}->{:p}",
                 size, *inout_ptr
             );
@@ -251,12 +243,6 @@ impl Status {
 
     pub(crate) fn is_ok(&self) -> bool {
         self.ctx as usize == 0
-    }
-
-    pub(crate) fn ok() -> Self {
-        Status {
-            ctx: std::ptr::null_mut(),
-        }
     }
 
     pub fn to_result(self) -> Result<(), StatusError> {
