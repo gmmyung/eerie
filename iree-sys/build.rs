@@ -117,20 +117,22 @@ fn main() {
         ], &build_path.join("build").join("include"), &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime"));
         
         
-        println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
-        println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
-        println!("cargo:rustc-link-search={}", build_path.join("build").join("lib").display());
-        
+        println!("cargo:rustc-link-search=native={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
+        println!("cargo:rustc-link-search=native={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
         println!("cargo:rustc-link-lib=static=cpuinfo");
         println!("cargo:rustc-link-lib=static=flatcc_parsing");
-        println!("cargo:rustc-link-lib=static=iree");
 
         #[cfg(target_os = "linux")]
-        println!("cargo:rustc-link-lib=stdc++");
-
+        {
+            println!("cargo:rustc-link-search=native={}", build_path.join("build").join("lib").display()); 
+            println!("cargo:rustc-link-lib=static=iree");
+            println!("cargo:rustc-link-lib=stdc++");
+        }
         
         #[cfg(target_os = "macos")]
         {
+            println!("cargo:rustc-link-search=framework={}", build_path.join("build").join("lib").display()); 
+            println!("cargo:rustc-link-lib=framework=iree");
             println!("cargo:rustc-link-lib=framework=Foundation");
             println!("cargo:rustc-link-lib=framework=Metal");
         }
