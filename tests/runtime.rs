@@ -32,7 +32,7 @@ fn test_session() {
     let instance = runtime::api::Instance::new(&options).unwrap();
     debug!("Instance created");
     let device = instance
-        .try_create_default_device("metal")
+        .try_create_default_device("local-sync")
         .expect("Failed to create device");
     debug!("Device created");
     let session = runtime::api::Session::create_with_device(
@@ -101,7 +101,7 @@ fn append_module() {
     let compiler = compiler::Compiler::new().unwrap();
     let mut compiler_session = compiler.create_session();
     compiler_session
-        .set_flags(vec!["--iree-hal-target-backends=metal".to_string()])
+        .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()])
         .unwrap();
     let source = compiler_session
         .create_source_from_file(Path::new("tests/add.mlir"))
@@ -125,7 +125,7 @@ fn append_module() {
         runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
     let instance = runtime::api::Instance::new(&options).unwrap();
     let device = instance
-        .try_create_default_device("metal")
+        .try_create_default_device("local-sync")
         .expect("Failed to create device");
     let session = runtime::api::Session::create_with_device(
         &instance,
