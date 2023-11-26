@@ -19,7 +19,7 @@ jobs:
       with:
         submodules: recursive
     - name: install iree-compile
-      run: pip3 install iree-compile==20231113.707
+      run: pip3 install iree-compiler==20231113.707
     - name: create config.toml
       run: |
         library_path=$(python3 -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')")
