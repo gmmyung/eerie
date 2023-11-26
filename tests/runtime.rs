@@ -104,7 +104,7 @@ fn append_module() {
         .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()])
         .unwrap();
     let source = compiler_session
-        .create_source_from_file(Path::new("tests/add.mlir"))
+        .create_source_from_file(Path::new("tests/mul.mlir"))
         .unwrap();
     let mut invocation = compiler_session.create_invocation();
     let mut output = compiler::MemBufferOutput::new(&compiler).unwrap();

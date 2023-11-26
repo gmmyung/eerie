@@ -24,7 +24,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
 [features]
 default = ["runtime", "compiler"]
 runtime = ["iree-sys/runtime"]
-compiler = ["iree-sys/from-python"]
+compiler = ["iree-sys/compiler"]
 
 [[example]]
 name = "resnet"

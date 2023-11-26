@@ -38,6 +38,10 @@ fn main() {
             &PathBuf::from(env::var("OUT_DIR").unwrap()).join("compiler"),
         );
 
+        // IREECompiler lib location by environment variable
+        let compiler_lib_path = PathBuf::from_str(&env::var("LIB_IREE_COMPILER").unwrap()).unwrap();
+        println!("cargo:rustc-link-search={}", compiler_lib_path.display());
+
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
 
