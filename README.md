@@ -1,12 +1,17 @@
 # Eerie 👻
 Eerie is a Rust binding of the IREE library. It aims to be a safe and robust API that is close to the IREE C API. 
 
-By the way, this crate is highly experimental, and nowhere near completion. It might contain several unsound code, and API will have breaking changes in the future. If you encounter any problem, feel free to leave an issue.
+By the way, this crate is experimental, and nowhere near completion. It might contain several unsound code, and API will have breaking changes in the future. If you encounter any problem, feel free to leave an issue.
 
 ### What can I do with this?
 Rust has a few ML frameworks such as [Candle](https://github.com/huggingface/candle) and [Burn](https://github.com/burn-rs/burn), but none of them supports JIT/AOT model compilation. By using the IREE compiler/runtime, one can build a full blown ML library that can generate compiled models in runtime.
 
 Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so this can be used to deploy ML models in embedded rust in the future.
+
+### Supported OS
+- [x] MacOS
+- [x] Linux
+- [ ] Windows
 
 
 ## Examples
@@ -103,10 +108,34 @@ The crate is divided into two sections: compiler and runtime. You can enable eac
 Eerie builds the IREE runtime from source during compilation, so there is no need for setup.
 
 ### Compiler
-A working python environment is needed. Eerie automatically links to the shared object library. Make sure to use this specific version of the package, or thing will break.
-
+The user must source the precompiled shared library. (This is necessary because it takes ~20 min to build the compiler) The shared library can be sourced from a python package installation of iree-compiler.
 ```sh
-python3 -m pip install iree-compiler==20231004.665
+pip3 install iree-compiler=20231113.707
+```
+
+In order to export the installed library location, run this script:
+```sh
+python -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')"
+
+```
+
+Then, set the rpath and envorinment variable accordingly. This can be done by adding the following `.cargo/config.toml` to your project directory.
+ 
+MacOS
+```toml
+[build]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/path/to/library/"]
+rustdocflags = ["-C", "link-arg=-Wl,-rpath,/path/to/library"]
+[env]
+LIB_IREE_COMPILER = "/path/to/library"
+```
+Linux
+```toml
+[build]
+rustflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library/"]
+rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
+[env]
+LIB_IREE_COMPILER = "/path/to/library"
 ```
 
 ## References

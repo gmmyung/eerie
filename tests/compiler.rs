@@ -88,7 +88,7 @@ rusty_fork_test! {
         let session = compiler.create_session();
         let mut invocation = session.create_invocation();
         invocation.set_verify_ir(true);
-        let source = Source::from_file(&session, Path::new("tests/add.mlir")).unwrap();
+        let source = Source::from_file(&session, Path::new("tests/mul.mlir")).unwrap();
         invocation.parse_source(source).unwrap();
     }
 
@@ -138,7 +138,7 @@ rusty_fork_test! {
         session.set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()]).unwrap();
         let mut invocation = session.create_invocation();
         invocation.set_verify_ir(true);
-        let source = Source::from_file(&session, Path::new("tests/add.mlir")).unwrap();
+        let source = Source::from_file(&session, Path::new("tests/mul.mlir")).unwrap();
         let mut output = MemBufferOutput::new(&compiler).unwrap();
         invocation.set_compile_to_phase("end").unwrap();
         invocation.parse_source(source).unwrap();
