@@ -12,7 +12,7 @@ pip3 install tensorflow transformers
 cd examples/
 python3 load_mlir.py <path to image>
 ```
-This python script will preprocess the given image into a binary file, and also exports resnet50 model from huggingface into a stablehlo MLIR bytecode.
+This python script will preprocess the given image into a binary file, and also export resnet50 model from huggingface into a stablehlo MLIR bytecode.
 
 ```sh
 cd ..
