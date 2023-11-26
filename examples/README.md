@@ -5,12 +5,12 @@ This example runs a tensorflow resnet50 model using Eerie.
 A Python environment installed is needed to translate the saved model into StableHLO format.
 
 ```sh
-pip3 install tensorflow 
+pip3 install tensorflow transformers
 ```
 
 ```sh
 cd examples/
-python3 load mlir.py <path to image>
+python3 load_mlir.py <path to image>
 ```
 This python script will preprocess the given image into a binary file, and also exports resnet50 model from huggingface into a stablehlo MLIR bytecode.
 
