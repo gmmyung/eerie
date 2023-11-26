@@ -8,6 +8,11 @@ Rust has a few ML frameworks such as [Candle](https://github.com/huggingface/can
 
 Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so this can be used to deploy ML models in embedded rust in the future.
 
+### Supported OS
+- [x] MacOS
+- [x] Linux
+- [ ] Windows
+
 
 ## Examples
 Compiling MLIR code into IREE VM framebuffer
