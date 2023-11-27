@@ -13,7 +13,7 @@ repository = "https://github.com/gmmyung/eerie"
 [dependencies]
 iree-sys = { path = "iree-sys" }
 thiserror = "1.0.48"
-tracing = "0.1.37"
+log = "0.4"
 
 [workspace]
 members = [
@@ -23,8 +23,8 @@ members = [
 [dev-dependencies]
 anyhow = "1.0.75"
 rusty-fork = "0.3.0"
-test-log = { version = "0.2.12", features = ["trace"], default-features = false }
-tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
+test-log = { version = "0.2.12" }
+env_logger = "0.10.1"
 
 [features]
 default = ["runtime", "compiler"]

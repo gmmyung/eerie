@@ -10,7 +10,7 @@ use eerie::{
 };
 use rusty_fork::rusty_fork_test;
 use test_log::test;
-use tracing::{debug, info};
+use log::{debug, info};
 
 #[test]
 fn test_instance() {

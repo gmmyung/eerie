@@ -8,7 +8,7 @@ use super::{
 };
 use iree_sys::runtime as sys;
 use std::{ffi::CString, marker::PhantomData, path::Path};
-use tracing::trace;
+use log::trace;
 
 /// Options used to configure an instance.
 pub struct InstanceOptions<'a> {
