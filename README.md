@@ -1,4 +1,6 @@
 # Eerie 👻
+![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/gmmyung/eerie/rust.yml) ![GitHub License](https://img.shields.io/github/license/gmmyung/eerie)
+
 Eerie is a Rust binding of the IREE library. It aims to be a safe and robust API that is close to the IREE C API. 
 
 By the way, this crate is experimental, and nowhere near completion. It might contain several unsound code, and API will have breaking changes in the future. If you encounter any problem, feel free to leave an issue.
