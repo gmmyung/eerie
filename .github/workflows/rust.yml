@@ -25,8 +25,8 @@ jobs:
         library_path=$(python3 -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')")
         mkdir -p .cargo
         echo "[build]
-        rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
-        rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
+        rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=address\"]
+        rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=address\"]
         [env]
         LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml 
 
@@ -34,4 +34,4 @@ jobs:
       run: rustup default nightly
         
     - name: Run tests
-      run: RUST_BACKTRACE=1 RUSTFLAGS="-Z sanitizer=address" cargo test -vv
+      run: RUST_BACKTRACE=1 cargo test -vv --target x86_64-unknown-linux-gnu
