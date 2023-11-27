@@ -28,7 +28,7 @@ jobs:
         rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
         rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
         [env]
-        LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml
+        LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml 
 
     - name: Switch to rust nightly
       run: rustup default nightly
