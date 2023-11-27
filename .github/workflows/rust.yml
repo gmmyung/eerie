@@ -29,6 +29,9 @@ jobs:
         rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
         [env]
         LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml
+
+    - name: Switch to rust nightly
+      run: rustup default nightly
         
     - name: Run tests
       run: RUST_BACKTRACE=1 RUSTFLAGS="-Z sanitizer=address" cargo test -vv
