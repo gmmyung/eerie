@@ -9,7 +9,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use thiserror::Error;
-use tracing::{debug, error};
+use log::{debug, error};
 
 pub struct Error {
     message: String,

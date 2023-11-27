@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 
 use iree_sys::runtime as sys;
-use tracing::debug;
+use log::debug;
 
 use super::{
     api::{self, Instance},

@@ -1,5 +1,5 @@
 use iree_sys::runtime as sys;
-use tracing::trace;
+use log::trace;
 
 use super::{
     api::{Instance, self},

@@ -1,7 +1,7 @@
 use std::{ffi::c_void, fmt::Display};
 
 use iree_sys::runtime as sys;
-use tracing::trace;
+use log::trace;
 
 pub struct ByteSpan<'a> {
     pub(crate) ctx: sys::iree_byte_span_t,
