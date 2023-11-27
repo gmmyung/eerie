@@ -25,8 +25,8 @@ jobs:
         library_path=$(python3 -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')")
         mkdir -p .cargo
         echo "[build]
-        rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=address\"]
-        rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=address\"]
+        rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=thread\"]
+        rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\", \"-Z\", \"sanitizer=thread\"]
         [env]
         LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml 
 
