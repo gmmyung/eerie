@@ -2,7 +2,7 @@ use eerie::compiler::*;
 use rusty_fork::rusty_fork_test;
 use std::path::Path;
 use test_log::test;
-use tracing::{debug, info};
+use log::{debug, info};
 
 // forking is necessary to avoid the compiler being initialized multiple times in the same process
 rusty_fork_test! {

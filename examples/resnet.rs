@@ -90,7 +90,7 @@ fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    env_logger::init();
     // timer for compile
     let start = std::time::Instant::now();
     let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
