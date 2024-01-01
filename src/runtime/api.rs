@@ -7,7 +7,9 @@ use super::{
     vm,
 };
 use iree_sys::runtime as sys;
-use std::{ffi::CString, marker::PhantomData, path::Path};
+use core::marker::PhantomData;
+#[cfg(feature = "std")]
+use std::path::Path;
 use tracing::trace;
 
 /// Options used to configure an instance.
@@ -277,7 +279,8 @@ impl<'a> Session<'a> {
     /// # Safety
     /// The runtime does not perform strict validation on the module data and assumes it is correct.
     /// Make sure that the bytecode data is valid and trusted before use.
-    pub unsafe fn append_module_from_file(&self, path: &Path) -> Result<(), RuntimeError> {
+    #[cfg(feature = "std")]
+    pub unsafe fn append_module_from_file(&self, path: &PathBuf) -> Result<(), RuntimeError> {
         let cstr = CString::new(path.to_str().unwrap()).unwrap();
         base::Status::from_raw(unsafe {
             trace!(

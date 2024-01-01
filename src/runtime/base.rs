@@ -1,4 +1,5 @@
-use std::{ffi::c_void, fmt::Display};
+use std::{fmt::Display};
+use core::ffi::c_void;
 
 use iree_sys::runtime as sys;
 use tracing::trace;
