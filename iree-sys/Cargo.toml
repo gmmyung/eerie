@@ -8,7 +8,6 @@ bindgen = "0.68.1"
 cmake = "0.1.50"
 
 [features]
-default = ["compiler", "runtime"]
 compiler = []
 runtime = []
-
+std = []

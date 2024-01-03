@@ -1,10 +1,12 @@
 use std::{path::PathBuf, str::FromStr};
 
+#[cfg(feature = "runtime")]
 use eerie::runtime::{
     hal::{BufferMapping, BufferView},
     vm::List,
 };
 
+#[cfg(feature = "compiler")]
 fn compile_mlir(data: &[u8]) -> Vec<u8> {
     use eerie::compiler;
     let compiler = compiler::Compiler::new().unwrap();
@@ -31,6 +33,7 @@ fn compile_mlir(data: &[u8]) -> Vec<u8> {
     Vec::from(output.map_memory().unwrap())
 }
 
+#[cfg(feature = "std")]
 fn load_image_bin(path: PathBuf) -> Vec<f32> {
     let data = std::fs::read(path).unwrap();
     let mut image_bin = Vec::new();
@@ -92,6 +95,8 @@ fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
 fn main() {
     env_logger::init();
     // timer for compile
+    #[cfg(feature = "compiler")]
+    {
     let start = std::time::Instant::now();
     let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
     let compiled_bytecode = compile_mlir(&mlir_bytecode);
@@ -112,4 +117,5 @@ fn main() {
     let id2label_file = std::fs::read_to_string("examples/id2label.txt").unwrap();
     let id2label: Vec<&str> = id2label_file.split("\n").collect();
     println!("The image is classified as: {}", id2label[max_idx]);
+    }
 }

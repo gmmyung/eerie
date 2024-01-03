@@ -26,7 +26,7 @@ impl<'a> Function<'a> {
                 self.session.context(),
                 self.ctx,
                 sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
-                std::ptr::null_mut(),
+                core::ptr::null_mut(),
                 input_list.to_raw(),
                 output_list.to_raw(),
                 self.session.get_allocator().ctx
@@ -58,7 +58,7 @@ macro_rules! impl_to_value {
                 out.__bindgen_anon_1.$variant = *self;
                 Value {
                     ctx: out,
-                    _marker: std::marker::PhantomData,
+                    _marker: core::marker::PhantomData,
                 }
             }
 
@@ -79,7 +79,7 @@ impl_to_value!(f64, f64_, iree_vm_value_type_e_IREE_VM_VALUE_TYPE_F64);
 /// VM value type, used for passing values to functions. Value is a reference counted type.
 pub struct Value<T: ToValue> {
     pub(crate) ctx: sys::iree_vm_value_t,
-    _marker: std::marker::PhantomData<T>,
+    _marker: core::marker::PhantomData<T>,
 }
 
 // This means that Value can be inserted into a List.
@@ -114,7 +114,7 @@ impl_value!(f64, f64_);
 pub struct Ref<'a, T: ToRef<'a>> {
     pub(crate) ctx: sys::iree_vm_ref_t,
     pub(crate) instance: &'a Instance,
-    pub(crate) _marker: std::marker::PhantomData<T>,
+    pub(crate) _marker: core::marker::PhantomData<T>,
 }
 
 // This means that Ref can be inserted into a List.
@@ -142,7 +142,7 @@ impl<'a, T: ToElementType> Ref<'a, BufferView<'a, T>> {
         BufferView {
             ctx: self.ctx.ptr as *mut sys::iree_hal_buffer_view_t,
             session,
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         }
     } 
 }
@@ -184,7 +184,7 @@ pub trait List<'a, T: Type> {
         base::Status::from_raw(status).to_result()?;
         Ok(Value {
             ctx: out,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         })
     }
 
@@ -233,7 +233,7 @@ pub trait List<'a, T: Type> {
         Ok(Ref {
             ctx: out,
             instance: self.instance(),
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         })
     }
 }
@@ -243,7 +243,7 @@ pub trait List<'a, T: Type> {
 pub struct StaticList<'a, T: Type> {
     pub(crate) ctx: *mut sys::iree_vm_list_t,
     instance: &'a super::api::Instance,
-    _marker: std::marker::PhantomData<(ByteSpan<'a>, T)>,
+    _marker: core::marker::PhantomData<(ByteSpan<'a>, T)>,
 }
 
 impl<'a, T: Type> StaticList<'a, T> {
@@ -253,7 +253,7 @@ impl<'a, T: Type> StaticList<'a, T> {
         capacity: usize,
         instance: &'a super::api::Instance,
     ) -> Result<Self, RuntimeError> {
-        let mut out = std::ptr::null_mut();
+        let mut out = core::ptr::null_mut();
         let status = unsafe {
             trace!("iree_vm_list_storage_size");
             let size = sys::iree_vm_list_storage_size(&T::to_raw(instance), capacity);
@@ -264,7 +264,7 @@ impl<'a, T: Type> StaticList<'a, T> {
         Ok(Self {
             ctx: out,
             instance,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         })
     }
 }
@@ -282,7 +282,7 @@ impl<'a, T: Type> List<'a, T> for StaticList<'a, T> {
         Self {
             ctx: raw,
             instance,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -299,7 +299,7 @@ impl<T: Type> Drop for StaticList<'_, T> {
 pub struct DynamicList<'a, T: Type> {
     pub(crate) ctx: *mut sys::iree_vm_list_t,
     _instance: &'a super::api::Instance,
-    _marker: std::marker::PhantomData<T>,
+    _marker: core::marker::PhantomData<T>,
 }
 
 impl<'a, T: Type> DynamicList<'a, T> {
@@ -308,7 +308,7 @@ impl<'a, T: Type> DynamicList<'a, T> {
         initial_capacity: usize,
         instance: &'a super::api::Instance,
     ) -> Result<Self, RuntimeError> {
-        let mut out = std::ptr::null_mut();
+        let mut out = core::ptr::null_mut();
         let status = unsafe {
             trace!("iree_vm_list_create");
             sys::iree_vm_list_create(
@@ -322,7 +322,7 @@ impl<'a, T: Type> DynamicList<'a, T> {
         Ok(Self {
             ctx: out,
             _instance: instance,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         })
     }
 
@@ -368,7 +368,7 @@ impl<'a, T: Type> List<'a, T> for DynamicList<'a, T> {
         Self {
             ctx: raw,
             _instance: instance,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         }
     }
 
