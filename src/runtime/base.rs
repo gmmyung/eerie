@@ -1,11 +1,11 @@
-use std::{ffi::c_void, fmt::Display};
-
+use core::{fmt::Display, ffi::c_void, marker::PhantomData, alloc::Layout};
+extern crate alloc;
 use iree_sys::runtime as sys;
 use log::trace;
 
 pub struct ByteSpan<'a> {
     pub(crate) ctx: sys::iree_byte_span_t,
-    marker: std::marker::PhantomData<&'a mut [u8]>,
+    marker: PhantomData<&'a mut [u8]>,
 }
 
 impl<'a> From<&'a mut [u8]> for ByteSpan<'a> {
@@ -16,20 +16,20 @@ impl<'a> From<&'a mut [u8]> for ByteSpan<'a> {
         };
         Self {
             ctx: byte_span,
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 }
 
 impl<'a> From<ByteSpan<'a>> for &'a mut [u8] {
     fn from(byte_span: ByteSpan<'a>) -> Self {
-        unsafe { std::slice::from_raw_parts_mut(byte_span.ctx.data, byte_span.ctx.data_length) }
+        unsafe { core::slice::from_raw_parts_mut(byte_span.ctx.data, byte_span.ctx.data_length) }
     }
 }
 
 pub struct ConstByteSpan<'a> {
     pub ctx: sys::iree_const_byte_span_t,
-    marker: std::marker::PhantomData<&'a [u8]>,
+    marker: PhantomData<&'a [u8]>,
 }
 
 impl<'a> From<&'a [u8]> for ConstByteSpan<'a> {
@@ -40,26 +40,26 @@ impl<'a> From<&'a [u8]> for ConstByteSpan<'a> {
         };
         Self {
             ctx: byte_span,
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 }
 
 impl<'a> From<ConstByteSpan<'a>> for &'a [u8] {
     fn from(byte_span: ConstByteSpan<'a>) -> Self {
-        unsafe { std::slice::from_raw_parts(byte_span.ctx.data, byte_span.ctx.data_length) }
+        unsafe { core::slice::from_raw_parts(byte_span.ctx.data, byte_span.ctx.data_length) }
     }
 }
 
 pub struct StringView<'a> {
     pub ctx: sys::iree_string_view_t,
-    marker: std::marker::PhantomData<&'a mut str>,
+    marker: PhantomData<&'a mut str>,
 }
 
 impl Display for StringView<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(
                 self.ctx.data as *const u8,
                 self.ctx.size,
             ))
@@ -75,7 +75,7 @@ impl<'a> From<&'a str> for StringView<'a> {
         };
         Self {
             ctx: string_view,
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         }
     }
 }
@@ -83,7 +83,7 @@ impl<'a> From<&'a str> for StringView<'a> {
 impl<'a> From<StringView<'a>> for &'a str {
     fn from(string_view: StringView<'a>) -> Self {
         unsafe {
-            std::str::from_utf8_unchecked_mut(std::slice::from_raw_parts_mut(
+            core::str::from_utf8_unchecked_mut(core::slice::from_raw_parts_mut(
                 string_view.ctx.data as *mut u8,
                 string_view.ctx.size,
             ))
@@ -98,7 +98,7 @@ pub(crate) struct Allocator {
 impl Allocator {
     pub fn get_global() -> Self {
         let allocator = sys::iree_allocator_t {
-            self_: std::ptr::null_mut(),
+            self_: core::ptr::null_mut(),
             ctl: Some(rust_allocator_ctl),
         };
         Self { ctx: allocator }
@@ -106,7 +106,7 @@ impl Allocator {
 
     pub fn null_allocator() -> Self {
         let allocator = sys::iree_allocator_t {
-            self_: std::ptr::null_mut(),
+            self_: core::ptr::null_mut(),
             ctl: Some(null_allocator_ctl),
         };
         Self { ctx: allocator }
@@ -132,7 +132,7 @@ unsafe extern "C" fn null_allocator_ctl(
             trace!("null_allocator_ctl: command: {:?}", command);
         }
     }
-    std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+    core::ptr::null_mut() as *mut c_void as sys::iree_status_t
 }
 
 unsafe extern "C" fn rust_allocator_ctl(
@@ -145,10 +145,10 @@ unsafe extern "C" fn rust_allocator_ctl(
     match command {
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_MALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            if size > std::isize::MAX as usize {
+            if size > core::isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
-            let ptr = std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
+            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(
                 size + ALIGNMENT,
                 ALIGNMENT,
             ));
@@ -158,14 +158,14 @@ unsafe extern "C" fn rust_allocator_ctl(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_MALLOC: size: {} -> {:?}",
                 size, *inout_ptr
             );
-            std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            if size > std::isize::MAX as usize {
+            if size > core::isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
-            let ptr = std::alloc::alloc_zeroed(std::alloc::Layout::from_size_align_unchecked(
+            let ptr = alloc::alloc::alloc_zeroed(Layout::from_size_align_unchecked(
                 size + ALIGNMENT,
                 ALIGNMENT,
             ));
@@ -175,10 +175,10 @@ unsafe extern "C" fn rust_allocator_ctl(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_CALLOC: size: {} -> {:?}",
                 size, *inout_ptr
             );
-            std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_REALLOC => {
-            if *inout_ptr == std::ptr::null_mut() {
+            if *inout_ptr == core::ptr::null_mut() {
                 // realloc of null is malloc
                 return rust_allocator_ctl(
                     _self_,
@@ -194,19 +194,19 @@ unsafe extern "C" fn rust_allocator_ctl(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_REALLOC: {} -> {}",
                 old_size, new_size
             );
-            if new_size > std::isize::MAX as usize {
+            if new_size > core::isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
-            let ptr = std::alloc::realloc(
+            let ptr = alloc::alloc::realloc(
                 ptr as *mut u8,
-                std::alloc::Layout::from_size_align_unchecked(old_size + ALIGNMENT, ALIGNMENT),
+                Layout::from_size_align_unchecked(old_size + ALIGNMENT, ALIGNMENT),
                 new_size + ALIGNMENT,
             );
             unsafe {
                 *(ptr as *mut usize) = new_size;
             }
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
-            std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
@@ -215,11 +215,11 @@ unsafe extern "C" fn rust_allocator_ctl(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE: size: {}->{:p}",
                 size, *inout_ptr
             );
-            std::alloc::dealloc(
+            alloc::alloc::dealloc(
                 ptr as *mut u8,
-                std::alloc::Layout::from_size_align_unchecked(size + ALIGNMENT, ALIGNMENT),
+                Layout::from_size_align_unchecked(size + ALIGNMENT, ALIGNMENT),
             );
-            std::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
         }
         _ => Status::from_code(StatusErrorKind::Unimplemented).ctx,
     }
@@ -260,15 +260,15 @@ impl Status {
     }
 }
 
-impl std::fmt::Debug for StatusError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for StatusError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Display::fmt(self, f)
     }
 }
 
 impl Display for StatusError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut bufptr = std::ptr::null_mut();
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut bufptr = core::ptr::null_mut();
         let allocator = Allocator::get_global();
         let mut size: usize = 0;
         if !(unsafe {
@@ -277,8 +277,8 @@ impl Display for StatusError {
             return write!(f, "Status: <failed to convert to string>");
         }
         let buf =
-            std::str::from_utf8(unsafe { std::slice::from_raw_parts(bufptr as *const u8, size) })
-                .map_err(|_| std::fmt::Error)?;
+            core::str::from_utf8(unsafe { core::slice::from_raw_parts(bufptr as *const u8, size) })
+                .map_err(|_| core::fmt::Error)?;
         let write_result = write!(f, "Status: {:?}", buf);
         unsafe {
             sys::iree_allocator_free(allocator.ctx, bufptr as *mut _);
@@ -291,6 +291,8 @@ pub struct StatusError {
     status: Status,
 }
 
+// TODO: change this when #![feature(error_in_core)] is stabilized
+#[cfg(feature = "std")]
 impl std::error::Error for StatusError {}
 
 impl<'a, 'b> Drop for Status {

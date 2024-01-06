@@ -1,6 +1,5 @@
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str::FromStr;
 
 fn generate_bindings(headers: &[PathBuf], include_path: &PathBuf, bindings_path: &PathBuf) {
@@ -54,11 +53,39 @@ fn main() {
 
         let build_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime_build");
             
-        cmake::Config::new(runtime_lib_path)
-            .define("BUILD_SHARED_LIBS", "OFF")
-            .define("IREERT_ENABLE_LTO", "ON")
+        let mut config = cmake::Config::new(runtime_lib_path);
+        
+        let var = env::var("PATH").unwrap();
+        let mut paths = env::split_paths(&var);
+        let mut find_program = |name: &str| {
+            paths.find(|path| path.join(name).exists())
+        };
+
+        config.define("BUILD_SHARED_LIBS", "OFF")
+            .define("IREERT_ENABLE_LTO", "OFF")
             .define("IREE_ROOT_DIR", PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree").to_str().unwrap())
-            .out_dir(&build_path)
+            .define("CMAKE_C_COMPILER", find_program("clang").unwrap().join("clang"))
+            .define("CMAKE_CXX_COMPILER", find_program("clang++").unwrap().join("clang++"));
+
+        // if bare metal (no-std), use the following
+        #[cfg(not(feature = "std"))]
+        config.define("CMAKE_SYSTEM_NAME", "Generic")
+            .define("IREE_BUILD_COMPILER", "OFF")
+            .define("IREE_ENABLE_THREADING", "OFF")
+            .define("IREE_HAL_DRIVER_DEFAULTS", "OFF")
+            .define("IREE_HAL_DRIVER_LOCAL_SYNC", "ON")
+            .define("IREE_HAL_EXECUTABLE_LOADER_DEFAULTS", "OFF")
+            .define("IREE_HAL_EXECUTABLE_LOADER_EMBEDDED_ELF", "ON")
+            .define("IREE_HAL_EXECUTABLE_LOADER_VMVX_MODULE", "ON")
+            .define("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF")
+            .define("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON")
+            .define("IREE_BUILD_TESTS", "OFF")
+            .define("IREE_BUILD_SAMPLES", "ON");
+
+        #[cfg(not(feature = "std"))]
+        println!("THIS IS NO_STD");
+
+        config.out_dir(&build_path)
             .build();
 
         generate_bindings(&[
@@ -73,8 +100,8 @@ fn main() {
             println!("cargo:rustc-link-search={}", build_path.join("build").join("lib").display()); 
             println!("cargo:rustc-link-lib=iree");
             println!("cargo:rustc-link-lib=stdc++");
-            println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
-            println!("cargo:rustc-link-lib=cpuinfo");
+            //println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
+            //println!("cargo:rustc-link-lib=cpuinfo");
             println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
             println!("cargo:rustc-link-lib=flatcc_parsing");
         }
@@ -83,8 +110,8 @@ fn main() {
         {
             println!("cargo:rustc-link-search=framework={}", build_path.join("build").join("lib").display()); 
             println!("cargo:rustc-link-lib=framework=iree");
-            println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
-            println!("cargo:rustc-link-lib=static=cpuinfo");
+            //println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
+            //println!("cargo:rustc-link-lib=static=cpuinfo");
             println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
             println!("cargo:rustc-link-lib=static=flatcc_parsing");
             println!("cargo:rustc-link-lib=framework=Foundation");

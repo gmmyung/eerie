@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Formatter};
+use core::fmt::{Debug, Formatter};
 
 use iree_sys::runtime as sys;
 use log::debug;
@@ -34,7 +34,7 @@ impl DriverRegistry {
 
 pub struct Device<'a> {
     pub(crate) ctx: *mut sys::iree_hal_device_t,
-    pub(crate) marker: std::marker::PhantomData<&'a api::Session<'a>>,
+    pub(crate) marker: core::marker::PhantomData<&'a api::Session<'a>>,
 }
 
 impl Drop for Device<'_> {
@@ -158,7 +158,7 @@ impl_to_element_type!(bool, Bool8);
 pub struct BufferView<'a, T: ToElementType> {
     pub(crate) ctx: *mut sys::iree_hal_buffer_view_t,
     pub(crate) session: &'a api::Session<'a>,
-    pub(crate) marker: std::marker::PhantomData<T>,
+    pub(crate) marker: core::marker::PhantomData<T>,
 }
 
 impl<'a, T: ToElementType> BufferView<'a, T> {
@@ -168,16 +168,16 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
         encoding_type: EncodingType,
         data: &[T],
     ) -> Result<Self, RuntimeError> {
-        let mut out_ptr = std::ptr::null_mut();
+        let mut out_ptr = core::ptr::null_mut();
         let bytespan: ConstByteSpan = unsafe {
-            std::slice::from_raw_parts(
+            core::slice::from_raw_parts(
                 data.as_ptr() as *const u8,
-                data.len() * std::mem::size_of::<T>(),
+                data.len() * core::mem::size_of::<T>(),
             )
         }
         .into();
         debug!("shape: {:?}", shape);
-        debug!("data len: {}", std::mem::size_of_val(data));
+        debug!("data len: {}", core::mem::size_of_val(data));
         base::Status::from_raw(unsafe {
             sys::iree_hal_buffer_view_allocate_buffer_copy(
                 sys::iree_runtime_session_device(session.ctx),
@@ -201,7 +201,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
         Ok(Self {
             ctx: out_ptr,
             session,
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         })
     }
 
@@ -212,7 +212,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
         Self {
             ctx,
             session,
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         }
     }
 
@@ -226,7 +226,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
 }
 
 impl<T: ToElementType> Debug for BufferView<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_str(unsafe {
             let buf = &mut [0i8; 1024];
             let mut len: usize = 0;
@@ -237,7 +237,7 @@ impl<T: ToElementType> Debug for BufferView<'_, T> {
                 buf.as_mut_ptr(),
                 &mut len as *mut usize,
             );
-            std::ffi::CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
+            core::ffi::CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
         })
     }
 }
@@ -256,7 +256,7 @@ impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
         let mut out = core::mem::MaybeUninit::<sys::iree_vm_ref_t>::zeroed();
         base::Status::from_raw(unsafe {
             sys::iree_vm_ref_wrap_retain(
-                self.ctx as *mut std::ffi::c_void,
+                self.ctx as *mut core::ffi::c_void,
                 Self::to_ref_type(instance),
                 out.as_mut_ptr(),
             )
@@ -266,7 +266,7 @@ impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
         Ok(Ref {
             ctx: unsafe { out.assume_init() },
             instance: instance,
-            _marker: std::marker::PhantomData,
+            _marker: core::marker::PhantomData,
         })
     }
 
@@ -277,12 +277,12 @@ impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
 
 pub struct BufferMapping<'a, T: ToElementType> {
     ctx: sys::iree_hal_buffer_mapping_t,
-    marker: std::marker::PhantomData<&'a T>,
+    marker: core::marker::PhantomData<&'a T>,
 }
 
 impl<'a, T: ToElementType> BufferMapping<'a, T> {
     pub fn new(buffer_view: BufferView<'a, T>) -> Result<Self, RuntimeError> {
-        let mut out = std::mem::MaybeUninit::<sys::iree_hal_buffer_mapping_t>::uninit();
+        let mut out = core::mem::MaybeUninit::<sys::iree_hal_buffer_mapping_t>::uninit();
         base::Status::from_raw(unsafe {
             sys::iree_hal_buffer_map_range(
                 buffer_view.get_buffer(),
@@ -296,15 +296,15 @@ impl<'a, T: ToElementType> BufferMapping<'a, T> {
         .to_result()?;
         Ok(Self {
             ctx: unsafe { out.assume_init() },
-            marker: std::marker::PhantomData,
+            marker: core::marker::PhantomData,
         })
     }
 
     pub fn data(&self) -> &'a [T] {
         unsafe {
-            std::slice::from_raw_parts(
+            core::slice::from_raw_parts(
                 self.ctx.contents.data as *const T,
-                self.ctx.contents.data_length / std::mem::size_of::<T>(),
+                self.ctx.contents.data_length / core::mem::size_of::<T>(),
             )
         }
     }

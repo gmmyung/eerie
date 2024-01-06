@@ -6,14 +6,18 @@ use super::{
     hal::{BufferView, ToElementType},
     vm,
 };
+extern crate alloc;
+use alloc::string::ToString;
 use iree_sys::runtime as sys;
-use std::{ffi::CString, marker::PhantomData, path::Path};
+use core::marker::PhantomData;
+#[cfg(feature = "std")]
+use std::{path::Path, ffi::CString};
 use log::trace;
 
 /// Options used to configure an instance.
 pub struct InstanceOptions<'a> {
     ctx: sys::iree_runtime_instance_options_t,
-    marker: std::marker::PhantomData<&'a mut DriverRegistry>,
+    marker: PhantomData<&'a mut DriverRegistry>,
 }
 
 impl<'a> InstanceOptions<'a> {
@@ -28,7 +32,7 @@ impl<'a> InstanceOptions<'a> {
         }
         Self {
             ctx: options,
-            marker: std::marker::PhantomData,
+            marker: PhantomData,
         }
     }
 
@@ -75,7 +79,7 @@ unsafe impl Sync for Instance {}
 impl Instance {
     /// Creates a new instance with the given options.
     pub fn new(options: &InstanceOptions) -> Result<Self, RuntimeError> {
-        let mut out_ptr = std::ptr::null_mut();
+        let mut out_ptr = core::ptr::null_mut();
         base::Status::from_raw(unsafe {
             trace!("iree_runtime_instance_create");
             sys::iree_runtime_instance_create(
@@ -95,7 +99,7 @@ impl Instance {
         };
         base::Allocator {
             ctx: sys::iree_allocator_t {
-                self_: std::ptr::null_mut(),
+                self_: core::ptr::null_mut(),
                 ctl: out_ptr.ctl,
             },
         }
@@ -122,7 +126,7 @@ impl Instance {
         &self,
         name: &str,
     ) -> Result<super::hal::Device, RuntimeError> {
-        let mut out_ptr = std::ptr::null_mut();
+        let mut out_ptr = core::ptr::null_mut();
         let status = unsafe {
             trace!(
                 "iree_runtime_instance_try_create_default_device, name: {}",
@@ -203,7 +207,7 @@ impl<'a> Session<'a> {
         options: &SessionOptions,
         device: &'a super::hal::Device,
     ) -> Result<Self, RuntimeError> {
-        let mut out_ptr = std::ptr::null_mut();
+        let mut out_ptr = core::ptr::null_mut();
         let allocator = instance.get_host_allocator();
         let status = unsafe {
             trace!("iree_runtime_session_create_with_device");
@@ -277,6 +281,7 @@ impl<'a> Session<'a> {
     /// # Safety
     /// The runtime does not perform strict validation on the module data and assumes it is correct.
     /// Make sure that the bytecode data is valid and trusted before use.
+    #[cfg(feature = "std")]
     pub unsafe fn append_module_from_file(&self, path: &Path) -> Result<(), RuntimeError> {
         let cstr = CString::new(path.to_str().unwrap()).unwrap();
         base::Status::from_raw(unsafe {
@@ -291,7 +296,7 @@ impl<'a> Session<'a> {
     }
 
     pub fn lookup_function<'f>(&'f self, name: &str) -> Result<vm::Function<'f>, RuntimeError> {
-        let mut out = std::mem::MaybeUninit::<sys::iree_vm_function_t>::uninit();
+        let mut out = core::mem::MaybeUninit::<sys::iree_vm_function_t>::uninit();
         base::Status::from_raw(unsafe {
             trace!("iree_runtime_session_lookup_function, name: {:?}", name);
             sys::iree_runtime_session_lookup_function(
@@ -363,7 +368,7 @@ impl<'a> Call<'a> {
 
     /// Creates a new call to the given function by name.
     pub fn from_func_name(session: &'a Session, name: &str) -> Result<Self, RuntimeError> {
-        let mut out = std::mem::MaybeUninit::uninit();
+        let mut out = core::mem::MaybeUninit::uninit();
         base::Status::from_raw(unsafe {
             trace!("iree_runtime_call_initialize_by_name, name: {:?}", name);
             sys::iree_runtime_call_initialize_by_name(
@@ -414,7 +419,7 @@ impl<'a> Call<'a> {
     pub fn outputs_pop_front_buffer_view<T: ToElementType>(
         &mut self,
     ) -> Result<BufferView<'_, T>, RuntimeError> {
-        let mut out = std::mem::MaybeUninit::uninit();
+        let mut out = core::mem::MaybeUninit::uninit();
         base::Status::from_raw(unsafe {
             trace!("iree_runtime_call_outputs_pop_front_buffer_view");
             sys::iree_runtime_call_outputs_pop_front_buffer_view(&mut self.ctx, out.as_mut_ptr())
