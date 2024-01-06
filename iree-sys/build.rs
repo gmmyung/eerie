@@ -62,7 +62,7 @@ fn main() {
         };
 
         config.define("BUILD_SHARED_LIBS", "OFF")
-            .define("IREERT_ENABLE_LTO", "ON")
+            .define("IREERT_ENABLE_LTO", "OFF")
             .define("IREE_ROOT_DIR", PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree").to_str().unwrap())
             .define("CMAKE_C_COMPILER", find_program("clang").unwrap().join("clang"))
             .define("CMAKE_CXX_COMPILER", find_program("clang++").unwrap().join("clang++"));
