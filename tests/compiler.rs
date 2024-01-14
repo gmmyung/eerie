@@ -1,5 +1,5 @@
 // forking is necessary to avoid the compiler being initialized multiple times in the same process
-#[cfg(feature = "compiler")]
+#![cfg(feature = "compiler")]
 mod test {
     use eerie::compiler::*;
     use log::{debug, info};
@@ -147,7 +147,14 @@ mod test {
             invocation.pipeline(Pipeline::Std).unwrap();
             invocation.output_vm_byte_code(&mut output).unwrap();
             let out_buf = output.map_memory().unwrap();
-            info!("Output: {}", unsafe{std::ffi::CStr::from_ptr(out_buf.as_ptr() as *const i8)}.to_str().unwrap());
+            info!(
+                "Output: {}",
+                unsafe{
+                    std::ffi::CStr::from_ptr(out_buf.as_ptr() as *const core::ffi::c_char)
+                        .to_str()
+                        .unwrap()
+                }
+            );
         }
     }
 }

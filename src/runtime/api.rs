@@ -8,11 +8,11 @@ use super::{
 };
 extern crate alloc;
 use alloc::string::ToString;
-use iree_sys::runtime as sys;
 use core::marker::PhantomData;
-#[cfg(feature = "std")]
-use std::{path::Path, ffi::CString};
+use iree_sys::runtime as sys;
 use log::trace;
+#[cfg(feature = "std")]
+use std::{ffi::CString, path::Path};
 
 /// Options used to configure an instance.
 pub struct InstanceOptions<'a> {
@@ -106,11 +106,10 @@ impl Instance {
     }
 
     pub(crate) fn get_vm_instance(&self) -> *mut sys::iree_vm_instance_t {
-        let out_ptr = unsafe {
+        unsafe {
             trace!("iree_runtime_instance_vm_instance");
             sys::iree_runtime_instance_vm_instance(self.ctx)
-        };
-        out_ptr
+        }
     }
 
     pub(crate) fn lookup_type(&self, full_name: StringView) -> sys::iree_vm_ref_type_t {
@@ -140,7 +139,7 @@ impl Instance {
         };
         base::Status::from_raw(status)
             .to_result()
-            .map_err(|e| RuntimeError::StatusError(e))?;
+            .map_err(RuntimeError::StatusError)?;
         Ok(super::hal::Device {
             ctx: out_ptr,
             marker: PhantomData,
@@ -221,7 +220,7 @@ impl<'a> Session<'a> {
         };
         base::Status::from_raw(status)
             .to_result()
-            .map_err(|e| RuntimeError::StatusError(e))?;
+            .map_err(RuntimeError::StatusError)?;
         Ok(Self {
             ctx: out_ptr,
             instance,
@@ -245,7 +244,7 @@ impl<'a> Session<'a> {
             sys::iree_runtime_session_trim(self.ctx)
         })
         .to_result()
-        .map_err(|e| RuntimeError::StatusError(e))
+        .map_err(RuntimeError::StatusError)
     }
 
     // pub fn append_module(&self, module: &Module) -> Result<(), RuntimeError> {
@@ -274,7 +273,7 @@ impl<'a> Session<'a> {
             )
         })
         .to_result()
-        .map_err(|e| RuntimeError::StatusError(e))
+        .map_err(RuntimeError::StatusError)
     }
 
     /// Appends a bytecode module to the context loaded from the given file.
@@ -292,7 +291,7 @@ impl<'a> Session<'a> {
             sys::iree_runtime_session_append_bytecode_module_from_file(self.ctx, cstr.as_ptr())
         })
         .to_result()
-        .map_err(|e| RuntimeError::StatusError(e))
+        .map_err(RuntimeError::StatusError)
     }
 
     pub fn lookup_function<'f>(&'f self, name: &str) -> Result<vm::Function<'f>, RuntimeError> {
@@ -392,7 +391,7 @@ impl<'a> Call<'a> {
             sys::iree_runtime_call_invoke(&mut self.ctx, 0)
         })
         .to_result()
-        .map_err(|e| RuntimeError::StatusError(e))
+        .map_err(RuntimeError::StatusError)
     }
 
     /// Pushes a buffer view to the call input list.
@@ -403,9 +402,10 @@ impl<'a> Call<'a> {
         buffer_view: &BufferView<'a, T>,
     ) -> Result<(), RuntimeError> {
         (self.session.instance.ctx == buffer_view.session.instance.ctx)
-            .then(|| ())
+            .then_some(())
             .ok_or(RuntimeError::InstanceMismatch(
-                "The buffer view must originate from the same instance of the runtime as the call.".to_string(),
+                "The buffer view must originate from the same instance of the runtime as the call."
+                    .to_string(),
             ))?;
         base::Status::from_raw(unsafe {
             trace!("iree_runtime_call_inputs_push_back_buffer_view");
@@ -438,23 +438,23 @@ impl<'a> Call<'a> {
     }
 
     /// Returns the mutable input list.
-    pub fn input_list<'l>(&'l mut self) -> DynamicList<'l, Undefined> {
+    pub fn input_list(&mut self) -> DynamicList<'_, Undefined> {
         unsafe {
             trace!("iree_runtime_call_inputs");
             List::from_raw(
                 self.session.instance,
-                sys::iree_runtime_call_inputs(&mut self.ctx),
+                sys::iree_runtime_call_inputs(&self.ctx),
             )
         }
     }
 
     /// Returns the mutable output list.
-    pub fn output_list<'l>(&'l mut self) -> DynamicList<'l, Undefined> {
+    pub fn output_list(&mut self) -> DynamicList<'_, Undefined> {
         unsafe {
             trace!("iree_runtime_call_outputs");
             List::from_raw(
                 self.session.instance,
-                sys::iree_runtime_call_outputs(&mut self.ctx),
+                sys::iree_runtime_call_outputs(&self.ctx),
             )
         }
     }

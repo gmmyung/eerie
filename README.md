@@ -113,7 +113,7 @@ Eerie builds the IREE runtime from source during compilation, so there is no nee
 ### Compiler
 The user must source the precompiled shared library. (This is necessary because it takes ~20 min to build the compiler) The shared library can be sourced from a python package installation of iree-compiler.
 ```sh
-pip3 install iree-compiler=20231113.707
+pip3 install iree-compiler
 ```
 
 In order to export the installed library location, run this script:
