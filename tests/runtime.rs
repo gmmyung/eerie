@@ -63,7 +63,7 @@ fn ref_list() {
     )
     .unwrap();
     let device = instance
-        .try_create_default_device("local-task")
+        .try_create_default_device("local-sync")
         .expect("Failed to create device");
     let session = runtime::api::Session::create_with_device(
         &instance,
@@ -91,11 +91,11 @@ fn ref_list() {
     info!("mapping: {:?}", mapping.data());
 }
 
-use eerie::compiler;
-use rusty_fork::rusty_fork_test;
-use std::path::Path;
 #[cfg(feature = "compiler")]
 rusty_fork_test! {
+    use eerie::compiler;
+    use rusty_fork::rusty_fork_test;
+    use std::path::Path;
     #[test]
     fn append_module() {
         let compiler = compiler::Compiler::new().unwrap();

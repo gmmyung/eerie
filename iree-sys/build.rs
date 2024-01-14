@@ -44,33 +44,84 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
 
-    #[cfg(feature="runtime")]
+    #[cfg(feature = "runtime")]
     {
         // Build IREE Runtime
         let runtime_lib_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("iree-samples")
             .join("runtime-library");
 
+        let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
+
         let build_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime_build");
-            
-        let mut config = cmake::Config::new(runtime_lib_path);
-        
+
+        let mut config = cmake::Config::new(runtime_lib_path.clone());
+
         let var = env::var("PATH").unwrap();
         let mut paths = env::split_paths(&var);
-        let mut find_program = |name: &str| {
-            paths.find(|path| path.join(name).exists())
-        };
+        let mut find_program = |name: &str| paths.find(|path| path.join(name).exists());
 
-        config.define("BUILD_SHARED_LIBS", "OFF")
+        config
+            .define("BUILD_SHARED_LIBS", "OFF")
+            .define("IREERT_ENABLE_LTO", "OFF") // TODO: Enable LTO
+            .define(
+                "IREE_ROOT_DIR",
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("iree")
+                    .to_str()
+                    .unwrap(),
+            )
+            .define("IREE_BUILD_COMPILER", "OFF");
+
+        #[cfg(feature = "std")]
+        config
+            .define("CMAKE_C_COMPILER", "clang")
+            .define("CMAKE_CXX_COMPILER", "clang++");
+
+        println!("host: {}", &std::env::var("HOST").unwrap());
+
+        // If target is no-std, build first on host machine
+        #[cfg(not(feature = "std"))]
+        cmake::Config::new(iree_path)
+            .define("BUILD_SHARED_LIBS", "OFF")
             .define("IREERT_ENABLE_LTO", "OFF")
-            .define("IREE_ROOT_DIR", PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree").to_str().unwrap())
-            .define("CMAKE_C_COMPILER", find_program("clang").unwrap().join("clang"))
-            .define("CMAKE_CXX_COMPILER", find_program("clang++").unwrap().join("clang++"));
+            .define(
+                "IREE_ROOT_DIR",
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("iree")
+                    .to_str()
+                    .unwrap(),
+            )
+            .define(
+                "CMAKE_INSTALL_PREFIX",
+                build_path.join("install").to_str().unwrap(),
+            )
+            .define("CMAKE_C_COMPILER", "clang")
+            .define("CMAKE_CXX_COMPILER", "clang++")
+            .define("IREE_HAL_DRIVER_DEFAULTS", "OFF")
+            .define("IREE_HAL_DRIVER_LOCAL_SYNC", "ON")
+            .define("IREE_BUILD_COMPILER", "ON")
+            .define("IREE_BUILD_TESTS", "OFF")
+            .define("IREE_BUILD_SAMPLES", "OFF")
+            .build_target("install")
+            .target(&std::env::var("HOST").unwrap())
+            .build();
+
+        #[cfg(not(feature = "std"))]
+        println!("HOST BUILD FINISHED");
 
         // if bare metal (no-std), use the following
         #[cfg(not(feature = "std"))]
-        config.define("CMAKE_SYSTEM_NAME", "Generic")
-            .define("IREE_BUILD_COMPILER", "OFF")
+        config
+            .define("CMAKE_SYSTEM_NAME", "Generic")
+            .define("CMAKE_EXE_LINKER_FLAGS_INIT", "--specs=nosys.specs -lc -lm")
+            .define("IREE_HOST_BIN_DIR", build_path.join("install").join("bin"))
+            .cflag("-DIREE_PLATFORM_GENERIC=1")
+            .cflag("-Wno-char-subscripts")
+            .cflag("-Wno-format")
+            .cflag("-Wno-implicit-function-declaration")
+            .cflag("-Wno-unused-variable")
+            .cflag(r#"-DIREE_TIME_NOW_FN="{ return 0; }" -DIREE_WAIT_UNTIL_FN=wait_until"#)
             .define("IREE_ENABLE_THREADING", "OFF")
             .define("IREE_HAL_DRIVER_DEFAULTS", "OFF")
             .define("IREE_HAL_DRIVER_LOCAL_SYNC", "ON")
@@ -80,39 +131,57 @@ fn main() {
             .define("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF")
             .define("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON")
             .define("IREE_BUILD_TESTS", "OFF")
-            .define("IREE_BUILD_SAMPLES", "ON");
+            .define("IREE_BUILD_SAMPLES", "OFF");
 
         #[cfg(not(feature = "std"))]
         println!("THIS IS NO_STD");
 
-        config.out_dir(&build_path)
-            .build();
+        config.out_dir(&build_path).build();
 
-        generate_bindings(&[
-            PathBuf::from("iree")
-                .join("runtime")
-                .join("api.h"),
-        ], &build_path.join("build").join("include"), &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime"));
-        
-        
+        generate_bindings(
+            &[PathBuf::from("iree").join("runtime").join("api.h")],
+            &build_path.join("build").join("include"),
+            &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime"),
+        );
+
         #[cfg(target_os = "linux")]
         {
-            println!("cargo:rustc-link-search={}", build_path.join("build").join("lib").display()); 
+            println!(
+                "cargo:rustc-link-search={}",
+                build_path.join("build").join("lib").display()
+            );
             println!("cargo:rustc-link-lib=iree");
             println!("cargo:rustc-link-lib=stdc++");
-            //println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
-            //println!("cargo:rustc-link-lib=cpuinfo");
-            println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
+            println!(
+                "cargo:rustc-link-search={}",
+                build_path
+                    .join("build")
+                    .join("iree_core")
+                    .join("build_tools")
+                    .join("third_party")
+                    .join("flatcc")
+                    .display()
+            );
             println!("cargo:rustc-link-lib=flatcc_parsing");
         }
 
         #[cfg(target_os = "macos")]
         {
-            println!("cargo:rustc-link-search=framework={}", build_path.join("build").join("lib").display()); 
+            println!(
+                "cargo:rustc-link-search=framework={}",
+                build_path.join("build").join("lib").display()
+            );
             println!("cargo:rustc-link-lib=framework=iree");
-            //println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("third_party").join("cpuinfo").display());
-            //println!("cargo:rustc-link-lib=static=cpuinfo");
-            println!("cargo:rustc-link-search={}", build_path.join("build").join("iree_core").join("build_tools").join("third_party").join("flatcc").display());
+            println!(
+                "cargo:rustc-link-search={}",
+                build_path
+                    .join("build")
+                    .join("iree_core")
+                    .join("build_tools")
+                    .join("third_party")
+                    .join("flatcc")
+                    .display()
+            );
             println!("cargo:rustc-link-lib=static=flatcc_parsing");
             println!("cargo:rustc-link-lib=framework=Foundation");
             println!("cargo:rustc-link-lib=framework=Metal");
