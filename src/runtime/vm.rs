@@ -2,9 +2,10 @@ use iree_sys::runtime as sys;
 use log::trace;
 
 use super::{
-    api::{Instance, self},
+    api::{self, Instance},
     base::{self, ByteSpan},
-    error::RuntimeError, hal::{BufferView, ToElementType},
+    error::RuntimeError,
+    hal::{BufferView, ToElementType},
 };
 
 /// An IREE function reference.
@@ -16,9 +17,14 @@ pub struct Function<'a> {
 impl<'a> Function<'a> {
     /// Synchronously invokes the function with the given arguments.
     /// The function will be run to completion and may block on external resources.
-    pub fn invoke<'b, T1, T2>(&self, input_list: &impl List<'b, T1>, output_list: &impl List<'b, T2>) 
-        -> Result<(), RuntimeError>
-        where T1: Type, T2: Type
+    pub fn invoke<'b, T1, T2>(
+        &self,
+        input_list: &impl List<'b, T1>,
+        output_list: &impl List<'b, T2>,
+    ) -> Result<(), RuntimeError>
+    where
+        T1: Type,
+        T2: Type,
     {
         base::Status::from_raw(unsafe {
             trace!("iree_vm_invoke");
@@ -29,9 +35,10 @@ impl<'a> Function<'a> {
                 core::ptr::null_mut(),
                 input_list.to_raw(),
                 output_list.to_raw(),
-                self.session.get_allocator().ctx
+                self.session.get_allocator().ctx,
             )
-        }).to_result()?;
+        })
+        .to_result()?;
         Ok(())
     }
 }
@@ -113,7 +120,7 @@ impl_value!(f64, f64_);
 /// VM Ref type, used for passing reference to things like HAL buffers. Ref is a reference counted type.
 pub struct Ref<'a, T: ToRef<'a>> {
     pub(crate) ctx: sys::iree_vm_ref_t,
-    pub(crate) instance: &'a Instance,
+    pub(crate) _instance: &'a Instance,
     pub(crate) _marker: core::marker::PhantomData<T>,
 }
 
@@ -144,7 +151,7 @@ impl<'a, T: ToElementType> Ref<'a, BufferView<'a, T>> {
             session,
             marker: core::marker::PhantomData,
         }
-    } 
+    }
 }
 
 /// Trait for types that can be used as VM references.
@@ -177,9 +184,9 @@ pub trait List<'a, T: Type> {
     /// must match the type of the value at the given index.
     fn get_value<A: ToValue>(&self, idx: usize) -> Result<Value<A>, RuntimeError> {
         let mut out = sys::iree_vm_value_t::default();
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_get_value, idx: {}", idx);
-            sys::iree_vm_list_get_value(self.to_raw(), idx, &mut out) 
+            sys::iree_vm_list_get_value(self.to_raw(), idx, &mut out)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(Value {
@@ -191,9 +198,9 @@ pub trait List<'a, T: Type> {
     /// Sets value at the given index. The caller must specify the type of the value, which
     /// must match the type of the value at the given index.
     fn set_value<A: ToValue>(&self, idx: usize, value: Value<A>) -> Result<(), RuntimeError> {
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_set_value, idx: {}", idx);
-            sys::iree_vm_list_set_value(self.to_raw(), idx, &value.ctx) 
+            sys::iree_vm_list_set_value(self.to_raw(), idx, &value.ctx)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(())
@@ -202,7 +209,7 @@ pub trait List<'a, T: Type> {
     /// Push value to the end of the list. Value is a reference counted object, so it will be
     /// retained.
     fn push_value<A: ToValue>(&self, value: Value<A>) -> Result<(), RuntimeError> {
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_push_value");
             sys::iree_vm_list_push_value(self.to_raw(), &value.ctx)
         };
@@ -213,26 +220,26 @@ pub trait List<'a, T: Type> {
     /// Push a Ref to the end of the list. Ref is a reference counted object, so it will be
     /// retained.
     fn push_ref<A: ToRef<'a>>(&self, value: &Ref<'a, A>) -> Result<(), RuntimeError> {
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_push_ref_retain");
-            sys::iree_vm_list_push_ref_retain(self.to_raw(), &value.ctx) 
+            sys::iree_vm_list_push_ref_retain(self.to_raw(), &value.ctx)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(())
     }
-    
+
     /// Get a Ref from the list. The caller must specify the type of the value, which
     /// must match the type of the Ref at the given index.
     fn get_ref<A: ToRef<'a>>(&'a self, idx: usize) -> Result<Ref<'a, A>, RuntimeError> {
         let mut out = sys::iree_vm_ref_t::default();
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_get_ref_retain, idx: {}", idx);
-            sys::iree_vm_list_get_ref_retain(self.to_raw(), idx, &mut out) 
+            sys::iree_vm_list_get_ref_retain(self.to_raw(), idx, &mut out)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(Ref {
             ctx: out,
-            instance: self.instance(),
+            _instance: self.instance(),
             _marker: core::marker::PhantomData,
         })
     }
@@ -327,25 +334,28 @@ impl<'a, T: Type> DynamicList<'a, T> {
     }
 
     pub fn capacity(&self) -> usize {
-        unsafe { 
+        unsafe {
             trace!("iree_vm_list_capacity");
-            sys::iree_vm_list_capacity(self.ctx) 
+            sys::iree_vm_list_capacity(self.ctx)
         }
     }
 
     pub fn reserve(&mut self, minimum_capacity: usize) -> Result<(), RuntimeError> {
-        let status = unsafe { 
-            trace!("iree_vm_list_reserve, minimum_capacity: {}", minimum_capacity);
-            sys::iree_vm_list_reserve(self.ctx, minimum_capacity) 
+        let status = unsafe {
+            trace!(
+                "iree_vm_list_reserve, minimum_capacity: {}",
+                minimum_capacity
+            );
+            sys::iree_vm_list_reserve(self.ctx, minimum_capacity)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(())
     }
 
     pub fn resize(&mut self, new_size: usize) -> Result<(), RuntimeError> {
-        let status = unsafe { 
+        let status = unsafe {
             trace!("iree_vm_list_resize, new_size: {}", new_size);
-            sys::iree_vm_list_resize(self.ctx, new_size) 
+            sys::iree_vm_list_resize(self.ctx, new_size)
         };
         base::Status::from_raw(status).to_result()?;
         Ok(())

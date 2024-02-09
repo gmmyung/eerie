@@ -3,8 +3,13 @@ name = "iree-sys"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+externc-libm = "0.1.0"
+compiler_builtins = "0.1.105"
+tinyrlibc = { git = "https://github.com/rust-embedded-community/tinyrlibc.git", features = ["alloc"] }
+
 [build-dependencies]
-bindgen = "0.68.1"
+bindgen = "0.69.4"
 cmake = "0.1.50"
 
 [features]

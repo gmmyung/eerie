@@ -97,25 +97,25 @@ fn main() {
     // timer for compile
     #[cfg(feature = "compiler")]
     {
-    let start = std::time::Instant::now();
-    let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
-    let compiled_bytecode = compile_mlir(&mlir_bytecode);
+        let start = std::time::Instant::now();
+        let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
+        let compiled_bytecode = compile_mlir(&mlir_bytecode);
 
-    println!("Compiled in {} ms", start.elapsed().as_millis());
+        println!("Compiled in {} ms", start.elapsed().as_millis());
 
-    // timer for run
-    let start = std::time::Instant::now();
-    let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
-    let output = run(&compiled_bytecode, &image_bin);
-    println!("Run in {} ms", start.elapsed().as_millis());
-    let max_idx = output
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap()
-        .0;
-    let id2label_file = std::fs::read_to_string("examples/id2label.txt").unwrap();
-    let id2label: Vec<&str> = id2label_file.split("\n").collect();
-    println!("The image is classified as: {}", id2label[max_idx]);
+        // timer for run
+        let start = std::time::Instant::now();
+        let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
+        let output = run(&compiled_bytecode, &image_bin);
+        println!("Run in {} ms", start.elapsed().as_millis());
+        let max_idx = output
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .unwrap()
+            .0;
+        let id2label_file = std::fs::read_to_string("examples/id2label.txt").unwrap();
+        let id2label: Vec<&str> = id2label_file.split("\n").collect();
+        println!("The image is classified as: {}", id2label[max_idx]);
     }
 }

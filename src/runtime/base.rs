@@ -1,4 +1,4 @@
-use core::{fmt::Display, ffi::c_void, marker::PhantomData, alloc::Layout};
+use core::{alloc::Layout, ffi::c_void, fmt::Display, marker::PhantomData};
 extern crate alloc;
 use iree_sys::runtime as sys;
 use log::trace;
@@ -35,7 +35,7 @@ pub struct ConstByteSpan<'a> {
 impl<'a> From<&'a [u8]> for ConstByteSpan<'a> {
     fn from(slice: &'a [u8]) -> Self {
         let byte_span = sys::iree_const_byte_span_t {
-            data: slice.as_ptr() as *const u8,
+            data: slice.as_ptr(),
             data_length: slice.len(),
         };
         Self {
@@ -132,7 +132,7 @@ unsafe extern "C" fn null_allocator_ctl(
             trace!("null_allocator_ctl: command: {:?}", command);
         }
     }
-    core::ptr::null_mut() as *mut c_void as sys::iree_status_t
+    core::ptr::null_mut() as sys::iree_status_t
 }
 
 unsafe extern "C" fn rust_allocator_ctl(
@@ -156,9 +156,10 @@ unsafe extern "C" fn rust_allocator_ctl(
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
             trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_MALLOC: size: {} -> {:?}",
-                size, *inout_ptr
+                size,
+                *inout_ptr
             );
-            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
@@ -173,12 +174,13 @@ unsafe extern "C" fn rust_allocator_ctl(
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
             trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_CALLOC: size: {} -> {:?}",
-                size, *inout_ptr
+                size,
+                *inout_ptr
             );
-            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_REALLOC => {
-            if *inout_ptr == core::ptr::null_mut() {
+            if (*inout_ptr).is_null() {
                 // realloc of null is malloc
                 return rust_allocator_ctl(
                     _self_,
@@ -192,7 +194,8 @@ unsafe extern "C" fn rust_allocator_ctl(
             let new_size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
             trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_REALLOC: {} -> {}",
-                old_size, new_size
+                old_size,
+                new_size
             );
             if new_size > core::isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
@@ -206,20 +209,21 @@ unsafe extern "C" fn rust_allocator_ctl(
                 *(ptr as *mut usize) = new_size;
             }
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
-            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let size = unsafe { *(ptr as *mut usize) };
             trace!(
                 "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE: size: {}->{:p}",
-                size, *inout_ptr
+                size,
+                *inout_ptr
             );
             alloc::alloc::dealloc(
                 ptr as *mut u8,
                 Layout::from_size_align_unchecked(size + ALIGNMENT, ALIGNMENT),
             );
-            core::ptr::null_mut() as *mut c_void as sys::iree_status_t
+            core::ptr::null_mut() as sys::iree_status_t
         }
         _ => Status::from_code(StatusErrorKind::Unimplemented).ctx,
     }
@@ -295,7 +299,7 @@ pub struct StatusError {
 #[cfg(feature = "std")]
 impl std::error::Error for StatusError {}
 
-impl<'a, 'b> Drop for Status {
+impl Drop for Status {
     fn drop(&mut self) {
         unsafe {
             if !self.is_ok() {

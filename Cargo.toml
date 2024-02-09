@@ -24,7 +24,7 @@ members = [
 anyhow = "1.0.75"
 rusty-fork = "0.3.0"
 test-log = { version = "0.2.12" }
-env_logger = "0.10.1"
+env_logger = "0.11.1"
 
 [features]
 default = ["runtime", "compiler", "std"]
@@ -36,4 +36,3 @@ std = ["dep:thiserror", "iree-sys/std"]
 name = "resnet"
 test = false
 bench = true
-

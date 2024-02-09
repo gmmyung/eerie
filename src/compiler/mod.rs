@@ -1,4 +1,5 @@
 use iree_sys::compiler as sys;
+use log::{debug, error};
 use std::{
     ffi::{CStr, CString},
     fmt::{Debug, Display, Formatter},
@@ -9,7 +10,6 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 use thiserror::Error;
-use log::{debug, error};
 
 pub struct Error {
     message: String,
@@ -74,10 +74,7 @@ impl Compiler {
             .iter()
             .map(|arg| std::ffi::CString::new(arg.as_str()))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut ptr_array = c_str_vec
-            .iter()
-            .map(|arg| arg.as_ptr())
-            .collect::<Vec<_>>();
+        let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
         let banner = std::ffi::CString::new("IREE Compiler")?;
         unsafe {
             sys::ireeCompilerSetupGlobalCL(
@@ -186,10 +183,7 @@ impl<'a> Session<'a> {
             .iter()
             .map(|arg| std::ffi::CString::new(arg.as_str()))
             .collect::<Result<Vec<_>, _>>()?;
-        let ptr_array = c_str_vec
-            .iter()
-            .map(|arg| arg.as_ptr())
-            .collect::<Vec<_>>();
+        let ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
         let err_ptr: *mut sys::iree_compiler_error_t;
         unsafe {
             debug!("Setting session flags");
@@ -200,7 +194,10 @@ impl<'a> Session<'a> {
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
 
         // TODO: This Method Does Not work
@@ -511,7 +508,10 @@ impl<'a, 'b> Invocation<'a, 'b> {
             Ok(self)
         } else {
             let diagnostic_queue = self.diagnostic_queue.as_ref().get_ref().clone();
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), diagnostic_queue))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                diagnostic_queue,
+            ))
         }
     }
 
@@ -525,7 +525,10 @@ impl<'a, 'b> Invocation<'a, 'b> {
             Ok(self)
         } else {
             let diagnostic_queue = self.diagnostic_queue.as_ref().get_ref().clone();
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), diagnostic_queue))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                diagnostic_queue,
+            ))
         }
     }
 
@@ -538,7 +541,10 @@ impl<'a, 'b> Invocation<'a, 'b> {
         if err_ptr.is_null() {
             Ok(self)
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 }
@@ -584,7 +590,10 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 _phantom: PhantomData,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 
@@ -616,7 +625,10 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 _phantom: PhantomData,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 
@@ -666,7 +678,10 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
                 })
                 .collect())
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 }
@@ -716,7 +731,10 @@ impl<'a> FileNameOutput<'a> {
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 }
@@ -759,7 +777,10 @@ impl<'a, 'b> FileOutput<'a, 'b> {
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 }
@@ -795,11 +816,14 @@ impl<'c> MemBufferOutput<'c> {
                 _compiler: compiler,
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 
-    pub fn map_memory<'buf>(&'buf self) -> Result<&'buf [u8], CompilerError> {
+    pub fn map_memory(&self) -> Result<&[u8], CompilerError> {
         debug!("Mapping membuffer output");
         let mut data_ptr = std::ptr::null_mut();
         let mut data_length = 0;
@@ -810,7 +834,10 @@ impl<'c> MemBufferOutput<'c> {
                 std::slice::from_raw_parts(data_ptr as *const u8, data_length.try_into().unwrap())
             })
         } else {
-            Err(CompilerError::IREECompilerError(Error::from_ptr(err_ptr), Diagnostics::default()))
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
         }
     }
 }
