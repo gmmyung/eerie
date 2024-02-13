@@ -151,12 +151,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
-name = "compiler_builtins"
-version = "0.1.106"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4ab134a739bafec76aa91ccb15d519a54e569350644a1fea6528d5a0d407e22"
-
-[[package]]
 name = "eerie"
 version = "0.1.0"
 dependencies = [
@@ -265,7 +259,6 @@ version = "0.1.0"
 dependencies = [
  "bindgen",
  "cmake",
- "compiler_builtins",
  "externc-libm",
  "tinyrlibc",
 ]
