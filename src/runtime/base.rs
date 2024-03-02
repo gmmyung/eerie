@@ -70,7 +70,7 @@ impl Display for StringView<'_> {
 impl<'a> From<&'a str> for StringView<'a> {
     fn from(s: &'a str) -> Self {
         let string_view = sys::iree_string_view_t {
-            data: s.as_ptr() as *mut i8,
+            data: s.as_ptr(),
             size: s.len(),
         };
         Self {

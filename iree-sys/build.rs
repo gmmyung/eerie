@@ -230,8 +230,10 @@ fn main() {
                 .join("build/build_tools/third_party/flatcc")
                 .display()
         );
-        println!("cargo:rustc-link-lib=flatcc_parsing");
+
+        // Print order is important.
         println!("cargo:rustc-link-lib=iree_runtime_unified");
+        println!("cargo:rustc-link-lib=flatcc_parsing");
 
         match target_os.as_str() {
             "linux" => {

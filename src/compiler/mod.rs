@@ -610,7 +610,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
             sys::ireeCompilerSourceWrapBuffer(
                 session.ctx,
                 buf_name.as_ptr(),
-                buf.as_ptr() as *const i8,
+                buf.as_ptr(),
                 buf.len(),
                 nullterm,
                 &mut source_ptr,
