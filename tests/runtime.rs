@@ -1,6 +1,7 @@
+#![cfg(feature = "runtime")]
 use eerie::runtime::{
     self,
-    hal::{BufferMapping, BufferView, EncodingType},
+    hal::BufferView,
     vm::{List, ToRef, ToValue, Value},
 };
 use log::{debug, info};
@@ -63,7 +64,7 @@ fn ref_list() {
     )
     .unwrap();
     let device = instance
-        .try_create_default_device("local-task")
+        .try_create_default_device("local-sync")
         .expect("Failed to create device");
     let session = runtime::api::Session::create_with_device(
         &instance,
@@ -91,11 +92,16 @@ fn ref_list() {
     info!("mapping: {:?}", mapping.data());
 }
 
-use eerie::compiler;
-use rusty_fork::rusty_fork_test;
-use std::path::Path;
 #[cfg(feature = "compiler")]
-rusty_fork_test! {
+mod integration_tests {
+    use eerie::compiler;
+    use eerie::runtime;
+    use eerie::runtime::hal::{BufferMapping, BufferView, EncodingType};
+    use eerie::runtime::vm::{List, ToRef};
+    use log::{debug, info};
+    use rusty_fork::rusty_fork_test;
+    use std::path::Path;
+    rusty_fork_test! {
     #[test]
     fn append_module() {
         let compiler = compiler::Compiler::new().unwrap();
@@ -181,5 +187,6 @@ rusty_fork_test! {
         let output = output_list.get_ref(0).unwrap();
         let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
         info!("Output: {:?}", output_mapping.data());
+    }
     }
 }

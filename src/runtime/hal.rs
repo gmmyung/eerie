@@ -32,6 +32,12 @@ impl DriverRegistry {
     }
 }
 
+impl Default for DriverRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Device<'a> {
     pub(crate) ctx: *mut sys::iree_hal_device_t,
     pub(crate) marker: core::marker::PhantomData<&'a api::Session<'a>>,
@@ -170,10 +176,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
     ) -> Result<Self, RuntimeError> {
         let mut out_ptr = core::ptr::null_mut();
         let bytespan: ConstByteSpan = unsafe {
-            core::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                data.len() * core::mem::size_of::<T>(),
-            )
+            core::slice::from_raw_parts(data.as_ptr() as *const u8, core::mem::size_of_val(data))
         }
         .into();
         debug!("shape: {:?}", shape);
@@ -228,7 +231,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
 impl<T: ToElementType> Debug for BufferView<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_str(unsafe {
-            let buf = &mut [0i8; 1024];
+            let buf = &mut [b'\0' as core::ffi::c_char; 1024];
             let mut len: usize = 0;
             sys::iree_hal_buffer_view_format(
                 self.ctx,
@@ -265,7 +268,7 @@ impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
         debug!("BufferView ref: {:?}", unsafe { out.assume_init() });
         Ok(Ref {
             ctx: unsafe { out.assume_init() },
-            instance: instance,
+            _instance: instance,
             _marker: core::marker::PhantomData,
         })
     }
