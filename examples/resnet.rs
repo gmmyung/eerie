@@ -1,12 +1,12 @@
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 use std::{path::PathBuf, str::FromStr};
 
-#[cfg(feature = "runtime")]
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 use eerie::runtime::{
     hal::{BufferMapping, BufferView},
     vm::List,
 };
-
-#[cfg(feature = "compiler")]
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 fn compile_mlir(data: &[u8]) -> Vec<u8> {
     use eerie::compiler;
     let compiler = compiler::Compiler::new().unwrap();
@@ -33,7 +33,7 @@ fn compile_mlir(data: &[u8]) -> Vec<u8> {
     Vec::from(output.map_memory().unwrap())
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 fn load_image_bin(path: PathBuf) -> Vec<f32> {
     let data = std::fs::read(path).unwrap();
     let mut image_bin = Vec::new();
@@ -44,7 +44,7 @@ fn load_image_bin(path: PathBuf) -> Vec<f32> {
     }
     image_bin
 }
-
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
     use eerie::runtime;
     use eerie::runtime::vm::ToRef;
@@ -91,31 +91,31 @@ fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
     let out = output_mapping.data().to_vec();
     out
 }
-
+#[cfg(all(feature = "compiler", feature = "runtime"))]
 fn main() {
     env_logger::init();
     // timer for compile
-    #[cfg(feature = "compiler")]
-    {
-        let start = std::time::Instant::now();
-        let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
-        let compiled_bytecode = compile_mlir(&mlir_bytecode);
+    let start = std::time::Instant::now();
+    let mlir_bytecode = std::fs::read("examples/resnet50.mlir").unwrap();
+    let compiled_bytecode = compile_mlir(&mlir_bytecode);
 
-        println!("Compiled in {} ms", start.elapsed().as_millis());
+    println!("Compiled in {} ms", start.elapsed().as_millis());
 
-        // timer for run
-        let start = std::time::Instant::now();
-        let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
-        let output = run(&compiled_bytecode, &image_bin);
-        println!("Run in {} ms", start.elapsed().as_millis());
-        let max_idx = output
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .unwrap()
-            .0;
-        let id2label_file = std::fs::read_to_string("examples/id2label.txt").unwrap();
-        let id2label: Vec<&str> = id2label_file.split("\n").collect();
-        println!("The image is classified as: {}", id2label[max_idx]);
-    }
+    // timer for run
+    let start = std::time::Instant::now();
+    let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
+    let output = run(&compiled_bytecode, &image_bin);
+    println!("Run in {} ms", start.elapsed().as_millis());
+    let max_idx = output
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0;
+    let id2label_file = std::fs::read_to_string("examples/id2label.txt").unwrap();
+    let id2label: Vec<&str> = id2label_file.split("\n").collect();
+    println!("The image is classified as: {}", id2label[max_idx]);
 }
+
+#[cfg(not(all(feature = "compiler", feature = "runtime")))]
+fn main() {}

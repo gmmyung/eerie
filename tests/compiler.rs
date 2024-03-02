@@ -1,5 +1,5 @@
 // forking is necessary to avoid the compiler being initialized multiple times in the same process
-#[cfg(feature = "compiler")]
+#![cfg(feature = "compiler")]
 mod test {
     use eerie::compiler::*;
     use log::{debug, info};

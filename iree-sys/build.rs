@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 fn generate_bindings(
-    target_arch: &str,
+    sysroot: Option<&PathBuf>,
     headers: &[PathBuf],
     include_path: &Path,
     bindings_path: &Path,
@@ -31,11 +31,13 @@ fn generate_bindings(
                 .clang_arg("-Wno-format")
                 .clang_arg("-Wno-implicit-function-declaration")
                 .clang_arg("-Wno-unused-variable")
-                //.clang_arg(r#"-DIREE_TIME_NOW_FN="{ return 0; }""#)
-                //.clang_arg(r#"-D'IREE_WAIT_UNTIL_FN(n)="{ return false; }"'"#)
                 .clang_arg("-DIREE_SYNCHRONIZATION_DISABLE_UNSAFE=1")
                 .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
-                .clang_arg("-DIREE_STATUS_FEATURES=0");
+                .clang_arg("-DIREE_STATUS_FEATURES=0")
+        }
+
+        if let Some(sysroot) = sysroot {
+            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
         }
 
         builder
@@ -46,12 +48,23 @@ fn generate_bindings(
     }
 }
 
+#[cfg(feature = "runtime")]
+fn get_sysroot(compiler: &str) -> PathBuf {
+    let output = std::process::Command::new(compiler)
+        .arg("-print-sysroot")
+        .output()
+        .expect("Failed to execute command");
+    PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
+}
+
 fn main() {
-    let cargo_target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    let cargo_target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let build_path = out_path.join("runtime_build");
+
+    #[cfg(all(target_os = "none", feature = "std"))]
+    {
+        compile_error!("The std feature cannot be used in a no-std environment");
+    }
 
     // The compiler feature enables the IREE compiler features. The IREE compiler binaries should
     // be downloaded from an external source such as pypi, and the downloaded binaries should be
@@ -65,7 +78,7 @@ fn main() {
         }
 
         generate_bindings(
-            &cargo_target_arch,
+            None,
             // Path to compiler headers
             &[PathBuf::from("iree/compiler/embedding_api.h")],
             // Path to IREE compiler header sources
@@ -76,7 +89,7 @@ fn main() {
 
         // The linker needs to find the IREE compiler dynamic library
         // LIB_IREE_COMPILER should be set by the user
-        let compiler_lib_path = PathBuf::from(&env::var("LIB_IREE_COMPILER").unwrap()).unwrap();
+        let compiler_lib_path = PathBuf::from(&env::var("LIB_IREE_COMPILER").unwrap());
         println!("cargo:rustc-link-search={}", compiler_lib_path.display());
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
@@ -86,8 +99,21 @@ fn main() {
     // clang/llvm. Other compilers can be used as well, but clang is recommended when cross-compiling.
     #[cfg(feature = "runtime")]
     {
+        let build_path = out_path.join("runtime_build");
+
+        let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+        let compiler = match target_arch.as_str() {
+            "arm" => Some("arm-none-eabi-gcc"),
+            "riscv64" | "riscv32" => Some("riscv64-unknown-elf-gcc"),
+            _ => None,
+        };
+
+        let sysroot = compiler.map(get_sysroot);
+
         generate_bindings(
-            &cargo_target_arch,
+            sysroot.as_ref(),
             &[PathBuf::from("iree").join("runtime").join("api.h")],
             &iree_path.join("runtime").join("src"),
             &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime"),
@@ -101,8 +127,6 @@ fn main() {
 
             // CMake config for host tool
             [
-                ("CMAKE_C_COMPILER", "clang"),
-                ("CMAKE_CXX_COMPILER", "clang++"),
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
                 ("IREE_BUILD_COMPILER", "OFF"),
                 ("IREE_BUILD_TESTS", "OFF"),
@@ -133,8 +157,6 @@ fn main() {
             ("IREE_BUILD_SAMPLES", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-            ("CMAKE_C_COMPILER", "clang"),
-            ("CMAKE_CXX_COMPILER", "clang++"),
         ]
         .iter()
         .for_each(|(k, v)| {
@@ -146,7 +168,6 @@ fn main() {
             .out_dir(&build_path);
 
         // If bare metal (no-std), use the following config.
-        // LLVM/Clang is required to cross-compile the IREE runtime
         #[cfg(not(feature = "std"))]
         {
             // CMake config for no-std runtime build
@@ -167,17 +188,20 @@ fn main() {
             });
             // C flags for no-std runtime build
             [
+                "-specs=nosys.specs",
                 "-DIREE_PLATFORM_GENERIC=1",
                 "-DIREE_FILE_IO_ENABLE=0",
                 "-DIREE_SYNCHRONIZATION_DISABLE_UNSAFE=1",
                 "-DIREE_TIME_NOW_FN=\"{return 0; }\"",
                 "-D'IREE_WAIT_UNTIL_FN(n)=false'",
+                "-DFLATCC_USE_GENERIC_ALIGNED_ALLOC",
+                "-DIREE_STATUS_FEATURES=0",
+                "-fdata-sections",
+                "-ffunction-sections",
                 "-Wno-char-subscripts",
                 "-Wno-format",
                 "-Wno-error=unused-variable",
-                //"-Wl,--gc-sections -ffunction-sections -fdata-sections",
-                "-Wl,-dead_strip",
-                "-nostdlib",
+                "-Wl,--gc-sections",
             ]
             .iter()
             .for_each(|v| {
@@ -196,65 +220,37 @@ fn main() {
         // The IREE runtime is compiled as static library, and it requires iree_runtime_unified,
         // flatcc_parsing, and platform-specific libraries. When cross-compiling, lld is
         // recommended.
-        match cargo_target_os.as_str() {
-            "linux" => {
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path.join("build/lib").display()
-                );
-                println!("cargo:rustc-link-lib=iree");
-                println!("cargo:rustc-link-lib=stdc++");
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path
-                        .join("build/iree_core/build_tools/third_party/flatcc")
-                        .display()
-                );
-                println!("cargo:rustc-link-lib=flatcc_parsing");
-            }
-            "none" => {
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path.join("build/runtime/src/iree/runtime").display()
-                );
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path
-                        .join("build/build_tools/third_party/flatcc")
-                        .display()
-                );
+        println!(
+            "cargo:rustc-link-search={}",
+            build_path.join("build/runtime/src/iree/runtime").display()
+        );
+        println!(
+            "cargo:rustc-link-search={}",
+            build_path
+                .join("build/build_tools/third_party/flatcc")
+                .display()
+        );
+        println!("cargo:rustc-link-lib=flatcc_parsing");
+        println!("cargo:rustc-link-lib=iree_runtime_unified");
 
-                println!("cargo:rustc-link-lib=iree_runtime_unified");
-                println!("cargo:rustc-link-lib=flatcc_parsing");
-                //println!("cargo:rustc-link-lib=nosys");
-                //println!("cargo:rustc-link-lib=c");
-                //println!("cargo:rustc-link-lib=m");
-                //println!(
-                //    "cargo:rustc-link-search={}",
-                //    "/Applications/ARM/arm-none-eabi/lib/thumb/v7e-m+fp/hard"
-                //);
+        match target_os.as_str() {
+            "linux" => {
+                println!("cargo:rustc-link-lib=stdc++");
             }
+
             "macos" => {
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path
-                        .join("build")
-                        .join("runtime/src/iree/runtime")
-                        .display()
-                );
-                println!("cargo:rustc-link-lib=iree_runtime_unified");
-                println!(
-                    "cargo:rustc-link-search={}",
-                    build_path
-                        .join("build/build_tools/third_party/flatcc")
-                        .display()
-                );
-                println!("cargo:rustc-link-lib=static=flatcc_parsing");
                 println!("cargo:rustc-link-lib=framework=Foundation");
                 println!("cargo:rustc-link-lib=framework=Metal");
             }
+
+            "none" => {
+                println!("cargo:rustc-link-search={}/lib", sysroot.unwrap().display());
+                println!("cargo:rustc-link-lib=nosys");
+                println!("cargo:rustc-link-lib=c");
+                println!("cargo:rustc-link-lib=m");
+            }
             _ => {
-                unimplemented!("Unsupported target OS: {}", cargo_target_os)
+                panic!("Only Linux, macOS, and no-std targets are supported");
             }
         }
     }

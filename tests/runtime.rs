@@ -1,3 +1,4 @@
+#![cfg(feature = "runtime")]
 use eerie::runtime::{
     self,
     hal::BufferView,

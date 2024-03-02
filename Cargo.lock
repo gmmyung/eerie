@@ -212,15 +212,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "externc-libm"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a92d5ce4982632e52cebdfdef7580f2f1b3dc02f541a74ac8838412bb3e9b123"
-dependencies = [
- "libm",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -259,8 +250,6 @@ version = "0.1.0"
 dependencies = [
  "bindgen",
  "cmake",
- "externc-libm",
- "tinyrlibc",
 ]
 
 [[package]]
@@ -299,12 +288,6 @@ dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
 ]
-
-[[package]]
-name = "libm"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "linux-raw-sys"
@@ -518,14 +501,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tinyrlibc"
-version = "0.3.0"
-source = "git+https://github.com/rust-embedded-community/tinyrlibc.git#a62f24c7a586d8c4c742132a8cf4a85a81920064"
-dependencies = [
- "cc",
 ]
 
 [[package]]
