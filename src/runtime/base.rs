@@ -60,7 +60,7 @@ impl Display for StringView<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", unsafe {
             core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                self.ctx.data as *const u8,
+                self.ctx.data as *const core::ffi::c_char,
                 self.ctx.size,
             ))
         })
@@ -70,7 +70,7 @@ impl Display for StringView<'_> {
 impl<'a> From<&'a str> for StringView<'a> {
     fn from(s: &'a str) -> Self {
         let string_view = sys::iree_string_view_t {
-            data: s.as_ptr(),
+            data: s.as_ptr() as *const core::ffi::c_char,
             size: s.len(),
         };
         Self {

@@ -599,7 +599,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
 
     fn wrap_buffer(
         session: &'a Session<'b>,
-        buf: &'c [u8],
+        buf: &'c [std::ffi::c_char],
         nullterm: bool,
     ) -> Result<Self, CompilerError> {
         debug!("Creating source from buffer");
