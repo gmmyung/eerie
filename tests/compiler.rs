@@ -147,7 +147,14 @@ mod test {
             invocation.pipeline(Pipeline::Std).unwrap();
             invocation.output_vm_byte_code(&mut output).unwrap();
             let out_buf = output.map_memory().unwrap();
-            info!("Output: {}", unsafe{std::ffi::CStr::from_ptr(out_buf.as_ptr())}.to_str().unwrap());
+            info!(
+                "Output: {}",
+                unsafe{
+                    std::ffi::CStr::from_ptr(out_buf.as_ptr() as *const core::ffi::c_char)
+                        .to_str()
+                        .unwrap()
+                }
+            );
         }
     }
 }

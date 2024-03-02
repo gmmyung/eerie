@@ -60,7 +60,7 @@ impl Display for StringView<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", unsafe {
             core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                self.ctx.data as *const core::ffi::c_char,
+                self.ctx.data as *const u8,
                 self.ctx.size,
             ))
         })

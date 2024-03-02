@@ -599,7 +599,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
 
     fn wrap_buffer(
         session: &'a Session<'b>,
-        buf: &'c [std::ffi::c_char],
+        buf: &'c [u8],
         nullterm: bool,
     ) -> Result<Self, CompilerError> {
         debug!("Creating source from buffer");
@@ -610,7 +610,7 @@ impl<'a, 'b, 'c> Source<'a, 'b, 'c> {
             sys::ireeCompilerSourceWrapBuffer(
                 session.ctx,
                 buf_name.as_ptr(),
-                buf.as_ptr(),
+                buf.as_ptr() as *const core::ffi::c_char,
                 buf.len(),
                 nullterm,
                 &mut source_ptr,

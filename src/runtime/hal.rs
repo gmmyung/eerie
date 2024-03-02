@@ -231,7 +231,7 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
 impl<T: ToElementType> Debug for BufferView<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.write_str(unsafe {
-            let buf = &mut [b'\0'; 1024];
+            let buf = &mut [b'\0' as core::ffi::c_char; 1024];
             let mut len: usize = 0;
             sys::iree_hal_buffer_view_format(
                 self.ctx,
