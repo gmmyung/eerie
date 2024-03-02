@@ -15,6 +15,7 @@ Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so t
 - [x] MacOS
 - [x] Linux
 - [ ] Windows
+- [x] Bare-Metal (thumb, rv32)
 
 
 ## Examples
@@ -140,6 +141,9 @@ rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
 [env]
 LIB_IREE_COMPILER = "/path/to/library"
 ```
+
+### No-std
+The runtime library can be compiled without the default `std` feature. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`), and a pre-compiled `Newlib` binary in the sysroot. 
 
 ## References
 - Also look at [SamKG/iree-rs](https://github.com/SamKG/iree-rs/tree/main)
