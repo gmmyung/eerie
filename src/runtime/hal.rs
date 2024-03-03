@@ -1,6 +1,6 @@
 use core::fmt::{Debug, Formatter};
 
-use iree_sys::runtime as sys;
+use eerie_sys::runtime as sys;
 use log::debug;
 
 use super::{

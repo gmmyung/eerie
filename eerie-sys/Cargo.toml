@@ -1,0 +1,49 @@
+[package]
+name = "eerie-sys"
+version = "0.2.0"
+edition = "2021"
+authors = ["Gyungmin Myung"]
+license = "Apache-2.0"
+description = "Unsafe raw bindings to the IREE Compiler/Runtime"
+homepage = "https://github.com/gmmyung/eerie"
+repository = "https://github.com/gmmyung/eerie"
+documentation = "https://docs.rs/eerie-sys"
+exclude = [
+    "iree/third_party/llvm-project/",
+    "iree/third_party/torch-mlir/",
+    "iree/third_party/vulkan_headers/",
+    "iree/third_party/webgpu-headers/",
+    "iree/third_party/spirv_headers/",
+    "iree/third_party/spirv_cross/",
+    "iree/third_party/musl/",
+    "iree/third_party/stablehlo/",
+    "iree/third_party/tracy/",
+    "iree/third_party/pybind11/",
+    "iree/third_party/renderdoc/",
+    "iree/third_party/mkdocs-material/",
+    "iree/third_party/nvidia_sdk_download/",
+    "iree/third_party/nccl/",
+    "iree/compiler/src/",
+    "iree/compiler/plugins/",
+    "iree/docs/",
+    "iree/llvm-external-projects/",
+    "iree/.github/",
+    "iree/experimental/",
+    "iree/samples/",
+    "iree/tests/compiler_driver",
+    "iree/tests/microbenchmarks",
+    "iree/tests/e2e",
+    "iree/tests/riscv32",
+    "iree/tests/transform_dialect",
+]
+
+[build-dependencies]
+bindgen = "0.69.4"
+cmake = "0.1.50"
+
+[features]
+default = ["compiler", "runtime", "std"]
+compiler = []
+runtime = []
+std = []
+

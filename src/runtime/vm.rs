@@ -1,4 +1,4 @@
-use iree_sys::runtime as sys;
+use eerie_sys::runtime as sys;
 use log::trace;
 
 use super::{

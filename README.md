@@ -109,7 +109,14 @@ More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
 The crate is divided into two sections: compiler and runtime. You can enable each functionality by toggling the "compiler" and "runtime" feature flags.
 
 ### Runtime
-Eerie builds the IREE runtime from source during compilation, so there is no need for setup.
+Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
+
+#### MacOS
+Install XCode and MacOS SDKs.
+
+#### No-std
+The runtime library can be compiled without the default `std` feature. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`), and a pre-compiled `Newlib` binary in the sysroot. 
+
 
 ### Compiler
 The user must source the precompiled shared library. (This is necessary because it takes ~20 min to build the compiler) The shared library can be sourced from a python package installation of iree-compiler.
@@ -120,7 +127,6 @@ pip3 install iree-compiler
 In order to export the installed library location, run this script:
 ```sh
 python -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')"
-
 ```
 
 Then, set the rpath and envorinment variable accordingly. This can be done by adding the following `.cargo/config.toml` to your project directory.
@@ -141,9 +147,6 @@ rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
 [env]
 LIB_IREE_COMPILER = "/path/to/library"
 ```
-
-### No-std
-The runtime library can be compiled without the default `std` feature. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`), and a pre-compiled `Newlib` binary in the sysroot. 
 
 ## References
 - Also look at [SamKG/iree-rs](https://github.com/SamKG/iree-rs/tree/main)

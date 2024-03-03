@@ -1,4 +1,5 @@
 // forking is necessary to avoid the compiler being initialized multiple times in the same process
+// TODO: make a global compiler object so we don't need this
 #![cfg(feature = "compiler")]
 mod test {
     use eerie::compiler::*;
@@ -70,9 +71,9 @@ mod test {
             let flags = Compiler::new()
                 .unwrap()
                 .create_session()
-                //.set_flags(vec!["--iree-input-type=tosa".to_string()])
-                //.unwrap()
-                .get_flags(false);
+                .set_flags(vec!["--iree-input-type=tosa".to_string()])
+                .unwrap()
+                .get_flags(true);
             info!("Flags: {:?}", flags);
         }
 

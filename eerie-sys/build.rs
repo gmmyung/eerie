@@ -87,10 +87,46 @@ fn main() {
             &out_path.join("compiler"),
         );
 
+        let compiler_lib_path = if std::env::var("DOCS_RS").is_ok() {
+            // Docs.rs automatically downloads the IREE compiler from pypi
+            // and sets the LIB_IREE_COMPILER environment variable
+
+            // Generate a python venv in OUT_DIR
+            std::process::Command::new("python3")
+                .arg("-m")
+                .arg("venv")
+                .arg(&out_path.join("venv"))
+                .status()
+                .map_err(|e| format!("Failed to create IREE compiler venv: {}", e))
+                .unwrap();
+            // Install the IREE compiler
+            std::process::Command::new(out_path.join("venv/bin/pip3"))
+                .env("VIRTUAL_ENV", out_path.join("venv"))
+                .args(["install", "iree-compiler"])
+                .status()
+                .map_err(|e| format!("Failed to install IREE compiler: {}", e))
+                .unwrap();
+            // Find the IREE compiler library
+            std::str::from_utf8(
+                &std::process::Command::new(out_path.join("venv/bin/python3"))
+                    .env("VIRTUAL_ENV", out_path.join("venv"))
+                    .args([
+                        "-c",
+                        "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
+                    ])
+                    .output()
+                    .expect("Failed to find IREE compiler library")
+                    .stdout,
+            )
+            .unwrap()
+            .to_string()
+        } else {
+            // The user can set the LIB_IREE_COMPILER environment variable
+            env::var("LIB_IREE_COMPILER").expect(
+				"The LIB_IREE_COMPILER environment variable must be set to the path to the IREE compiler library")
+        };
         // The linker needs to find the IREE compiler dynamic library
-        // LIB_IREE_COMPILER should be set by the user
-        let compiler_lib_path = PathBuf::from(&env::var("LIB_IREE_COMPILER").unwrap());
-        println!("cargo:rustc-link-search={}", compiler_lib_path.display());
+        println!("cargo:rustc-link-search={}", compiler_lib_path);
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
 

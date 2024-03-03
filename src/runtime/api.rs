@@ -9,7 +9,7 @@ use super::{
 extern crate alloc;
 use alloc::string::ToString;
 use core::marker::PhantomData;
-use iree_sys::runtime as sys;
+use eerie_sys::runtime as sys;
 use log::trace;
 #[cfg(feature = "std")]
 use std::{ffi::CString, path::Path};
