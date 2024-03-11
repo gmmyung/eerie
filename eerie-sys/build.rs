@@ -91,25 +91,15 @@ fn main() {
             // Docs.rs automatically downloads the IREE compiler from pypi
             // and sets the LIB_IREE_COMPILER environment variable
 
-            // Generate a python venv in OUT_DIR
-            std::process::Command::new("python3")
-                .arg("-m")
-                .arg("venv")
-                .arg(&out_path.join("venv"))
-                .status()
-                .map_err(|e| format!("Failed to create IREE compiler venv: {}", e))
-                .unwrap();
-            // Install the IREE compiler
-            std::process::Command::new(out_path.join("venv/bin/pip3"))
-                .env("VIRTUAL_ENV", out_path.join("venv"))
+            std::process::Command::new("pip3")
                 .args(["install", "iree-compiler"])
                 .status()
                 .map_err(|e| format!("Failed to install IREE compiler: {}", e))
                 .unwrap();
+
             // Find the IREE compiler library
             std::str::from_utf8(
-                &std::process::Command::new(out_path.join("venv/bin/python3"))
-                    .env("VIRTUAL_ENV", out_path.join("venv"))
+                &std::process::Command::new(out_path.join("python3"))
                     .args([
                         "-c",
                         "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
