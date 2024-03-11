@@ -172,14 +172,18 @@ impl Type for Undefined {
     }
 }
 
-/// List type, used for passing lists of values to functions.
-pub trait List<'a, T: Type> {
+pub(crate) trait IsList<'a, T: Type> {
     fn to_raw(&self) -> *mut sys::iree_vm_list_t;
 
     fn instance(&self) -> &super::api::Instance;
 
     fn from_raw(instance: &'a super::api::Instance, raw: *mut sys::iree_vm_list_t) -> Self;
+}
 
+/// List type, used for passing lists of values to functions.
+#[allow(private_bounds)]
+// Private bounds are needed because the IsList cannot be implemented for other types.
+pub trait List<'a, T: Type>: IsList<'a, T> {
     /// Returns value at the given index. The caller must specify the type of the value, which
     /// must match the type of the value at the given index.
     fn get_value<A: ToValue>(&self, idx: usize) -> Result<Value<A>, RuntimeError> {
@@ -276,7 +280,9 @@ impl<'a, T: Type> StaticList<'a, T> {
     }
 }
 
-impl<'a, T: Type> List<'a, T> for StaticList<'a, T> {
+impl<'a, T: Type> List<'a, T> for StaticList<'a, T> {}
+
+impl<'a, T: Type> IsList<'a, T> for StaticList<'a, T> {
     fn to_raw(&self) -> *mut sys::iree_vm_list_t {
         self.ctx
     }
@@ -369,7 +375,9 @@ impl<'a, T: Type> DynamicList<'a, T> {
     }
 }
 
-impl<'a, T: Type> List<'a, T> for DynamicList<'a, T> {
+impl<'a, T: Type> List<'a, T> for DynamicList<'a, T> {}
+
+impl<'a, T: Type> IsList<'a, T> for DynamicList<'a, T> {
     fn to_raw(&self) -> *mut sys::iree_vm_list_t {
         self.ctx
     }

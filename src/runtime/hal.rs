@@ -10,6 +10,7 @@ use super::{
     vm::{Ref, ToRef},
 };
 
+/// A driver registry.
 pub struct DriverRegistry {
     pub(crate) ctx: *mut sys::iree_hal_driver_registry_t,
 }
@@ -23,6 +24,7 @@ impl Drop for DriverRegistry {
 }
 
 impl DriverRegistry {
+    /// Creates a new default driver registry.
     pub fn new() -> Self {
         let out_ptr;
         unsafe {
@@ -38,6 +40,7 @@ impl Default for DriverRegistry {
     }
 }
 
+/// A HAL device.
 pub struct Device<'a> {
     pub(crate) ctx: *mut sys::iree_hal_device_t,
     pub(crate) marker: core::marker::PhantomData<&'a api::Session<'a>>,
@@ -51,6 +54,7 @@ impl Drop for Device<'_> {
     }
 }
 
+/// An encoding type.
 pub enum EncodingType {
     Opaque,
     DenseRowMajor,
@@ -139,6 +143,7 @@ pub trait ToElementType {
     fn to_element_type() -> ElementType;
 }
 
+// Macro for implementing ToElementType
 macro_rules! impl_to_element_type {
     ($type:ty, $variant:ident) => {
         impl ToElementType for $type {
@@ -161,6 +166,8 @@ impl_to_element_type!(f32, Float32);
 impl_to_element_type!(f64, Float64);
 impl_to_element_type!(bool, Bool8);
 
+/// A shaped and typed view into a storage buffer.
+/// This is the closest thing to a "tensor" we have.
 pub struct BufferView<'a, T: ToElementType> {
     pub(crate) ctx: *mut sys::iree_hal_buffer_view_t,
     pub(crate) session: &'a api::Session<'a>,
@@ -168,6 +175,7 @@ pub struct BufferView<'a, T: ToElementType> {
 }
 
 impl<'a, T: ToElementType> BufferView<'a, T> {
+    /// Create a new BufferView for the given data
     pub fn new(
         session: &'a api::Session,
         shape: &[usize],
@@ -278,12 +286,14 @@ impl<'a, T: ToElementType> ToRef<'a> for BufferView<'a, T> {
     }
 }
 
+/// A buffer mapping. This is used to read or write data from a buffer.
 pub struct BufferMapping<'a, T: ToElementType> {
     ctx: sys::iree_hal_buffer_mapping_t,
     marker: core::marker::PhantomData<&'a T>,
 }
 
 impl<'a, T: ToElementType> BufferMapping<'a, T> {
+    /// Creates a new buffer mapping.
     pub fn new(buffer_view: BufferView<'a, T>) -> Result<Self, RuntimeError> {
         let mut out = core::mem::MaybeUninit::<sys::iree_hal_buffer_mapping_t>::uninit();
         base::Status::from_raw(unsafe {
@@ -303,6 +313,7 @@ impl<'a, T: ToElementType> BufferMapping<'a, T> {
         })
     }
 
+    /// Returns a slice of the data
     pub fn data(&self) -> &'a [T] {
         unsafe {
             core::slice::from_raw_parts(

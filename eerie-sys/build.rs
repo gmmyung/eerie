@@ -216,6 +216,7 @@ fn main() {
                 ("IREE_HAL_EXECUTABLE_LOADER_VMVX_MODULE", "ON"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
+                ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
                 ("CMAKE_SYSTEM_NAME", "Generic"),
             ]
             .iter()

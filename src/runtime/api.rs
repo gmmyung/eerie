@@ -1,10 +1,9 @@
-use super::vm::{DynamicList, List, Undefined};
+use super::vm::{self, DynamicList, IsList, Undefined};
 use super::{base, hal::DriverRegistry};
 use super::{
     base::StringView,
     error::RuntimeError,
     hal::{BufferView, ToElementType},
-    vm,
 };
 extern crate alloc;
 use alloc::string::ToString;
@@ -441,7 +440,7 @@ impl<'a> Call<'a> {
     pub fn input_list(&mut self) -> DynamicList<'_, Undefined> {
         unsafe {
             trace!("iree_runtime_call_inputs");
-            List::from_raw(
+            DynamicList::from_raw(
                 self.session.instance,
                 sys::iree_runtime_call_inputs(&self.ctx),
             )
@@ -452,7 +451,7 @@ impl<'a> Call<'a> {
     pub fn output_list(&mut self) -> DynamicList<'_, Undefined> {
         unsafe {
             trace!("iree_runtime_call_outputs");
-            List::from_raw(
+            DynamicList::from_raw(
                 self.session.instance,
                 sys::iree_runtime_call_outputs(&self.ctx),
             )
