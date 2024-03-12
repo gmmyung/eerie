@@ -1,6 +1,6 @@
 [package]
 name = "eerie-sys"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Gyungmin Myung"]
 license = "Apache-2.0"
@@ -11,7 +11,6 @@ documentation = "https://docs.rs/eerie-sys"
 exclude = [
     "iree/third_party/llvm-project/",
     "iree/third_party/torch-mlir/",
-    "iree/third_party/vulkan_headers/",
     "iree/third_party/webgpu-headers/",
     "iree/third_party/spirv_headers/",
     "iree/third_party/spirv_cross/",
@@ -21,11 +20,9 @@ exclude = [
     "iree/third_party/pybind11/",
     "iree/third_party/renderdoc/",
     "iree/third_party/mkdocs-material/",
-    "iree/third_party/nvidia_sdk_download/",
-    "iree/third_party/nccl/",
     "iree/third_party/flatcc/test/",
     "iree/third_party/flatcc/doc/",
-    "iree/third_party/cpuinfo/",
+    "iree/third_party/cpuinfo/test/",
     "iree/compiler/src/",
     "iree/compiler/plugins/",
     "iree/compiler/bindings/python/",
