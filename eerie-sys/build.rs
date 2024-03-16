@@ -87,10 +87,36 @@ fn main() {
             &out_path.join("compiler"),
         );
 
+        let compiler_lib_path = if std::env::var("DOCS_RS").is_ok() {
+            // Docs.rs automatically downloads the IREE compiler from pypi
+            // and sets the LIB_IREE_COMPILER environment variable
+
+            std::process::Command::new("pip3")
+                .args(["install", "iree-compiler"])
+                .status()
+                .map_err(|e| format!("Failed to install IREE compiler: {}", e))
+                .unwrap();
+
+            // Find the IREE compiler library
+            std::str::from_utf8(
+                &std::process::Command::new(out_path.join("python3"))
+                    .args([
+                        "-c",
+                        "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
+                    ])
+                    .output()
+                    .expect("Failed to find IREE compiler library")
+                    .stdout,
+            )
+            .unwrap()
+            .to_string()
+        } else {
+            // The user can set the LIB_IREE_COMPILER environment variable
+            env::var("LIB_IREE_COMPILER").expect(
+				"The LIB_IREE_COMPILER environment variable must be set to the path to the IREE compiler library")
+        };
         // The linker needs to find the IREE compiler dynamic library
-        // LIB_IREE_COMPILER should be set by the user
-        let compiler_lib_path = PathBuf::from(&env::var("LIB_IREE_COMPILER").unwrap());
-        println!("cargo:rustc-link-search={}", compiler_lib_path.display());
+        println!("cargo:rustc-link-search={}", compiler_lib_path);
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
 
@@ -180,6 +206,7 @@ fn main() {
                 ("IREE_HAL_EXECUTABLE_LOADER_VMVX_MODULE", "ON"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
+                ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
                 ("CMAKE_SYSTEM_NAME", "Generic"),
             ]
             .iter()

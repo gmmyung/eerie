@@ -1,8 +1,9 @@
 use core::{alloc::Layout, ffi::c_void, fmt::Display, marker::PhantomData};
 extern crate alloc;
-use iree_sys::runtime as sys;
+use eerie_sys::runtime as sys;
 use log::trace;
 
+/// A wrapper for a mutable byte span
 pub struct ByteSpan<'a> {
     pub(crate) ctx: sys::iree_byte_span_t,
     marker: PhantomData<&'a mut [u8]>,
@@ -27,6 +28,7 @@ impl<'a> From<ByteSpan<'a>> for &'a mut [u8] {
     }
 }
 
+/// A wrapper for a constant byte span
 pub struct ConstByteSpan<'a> {
     pub ctx: sys::iree_const_byte_span_t,
     marker: PhantomData<&'a [u8]>,
@@ -51,6 +53,7 @@ impl<'a> From<ConstByteSpan<'a>> for &'a [u8] {
     }
 }
 
+/// A wrapper for a string view
 pub struct StringView<'a> {
     pub ctx: sys::iree_string_view_t,
     marker: PhantomData<&'a mut str>,
@@ -229,6 +232,7 @@ unsafe extern "C" fn rust_allocator_ctl(
     }
 }
 
+/// IREE runtime status
 pub struct Status {
     ctx: sys::iree_status_t,
 }
@@ -249,6 +253,7 @@ impl Status {
         self.ctx as usize == 0
     }
 
+    /// Converts from `Status` to `Result<(), StatusError>`.
     pub fn to_result(self) -> Result<(), StatusError> {
         if self.is_ok() {
             Ok(())
@@ -257,6 +262,9 @@ impl Status {
         }
     }
 
+    /// Returns a new status that is |base_status| if not OK and otherwise returns
+    /// |new_status|. This allows for chaining failure handling code that may also
+    /// return statuses.
     pub fn chain(self, other: Self) -> Self {
         Self {
             ctx: unsafe { sys::iree_status_join(self.ctx, other.ctx) },
@@ -291,6 +299,7 @@ impl Display for StatusError {
     }
 }
 
+/// IREE runtime status error
 pub struct StatusError {
     status: Status,
 }
@@ -312,6 +321,7 @@ impl Drop for Status {
 // Necessary because status code lifetime is not specified in the C API
 static STATUS_CODES: [usize; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
+/// IREE runtime status error
 pub enum StatusErrorKind {
     Cancelled,
     Unknown,
