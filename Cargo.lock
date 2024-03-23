@@ -96,9 +96,9 @@ checksum = "ed570934406eb16438a4e976b1b4500774099c13b8cb96eec99f620f05090ddf"
 
 [[package]]
 name = "cc"
-version = "1.0.88"
+version = "1.0.90"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02f341c093d19155a6e41631ce5971aac4e9a868262212153124c15fa22d1cdc"
+checksum = "8cd6604a82acf3039f1144f54b8eb34e91ffba622051189e71b781822d5ee1f5"
 
 [[package]]
 name = "cexpr"
@@ -143,7 +143,7 @@ checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
 name = "eerie"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "eerie-sys",
@@ -156,9 +156,10 @@ dependencies = [
 
 [[package]]
 name = "eerie-sys"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "bindgen",
+ "cc",
  "cmake",
 ]
 

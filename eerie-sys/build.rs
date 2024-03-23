@@ -33,7 +33,6 @@ fn generate_bindings(
                 .clang_arg("-Wno-unused-variable")
                 .clang_arg("-DIREE_SYNCHRONIZATION_DISABLE_UNSAFE=1")
                 .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
-                .clang_arg("-DIREE_STATUS_FEATURES=0")
         }
 
         if let Some(sysroot) = sysroot {
@@ -48,13 +47,15 @@ fn generate_bindings(
     }
 }
 
-#[cfg(feature = "runtime")]
-fn get_sysroot(compiler: &str) -> PathBuf {
+#[cfg(not(feature = "runtime"))]
+fn get_multi_dir(compiler: &str, arch: &str, abi: &str) -> Option<PathBuf> {
     let output = std::process::Command::new(compiler)
-        .arg("-print-sysroot")
+        .arg(format!("-march={}", arch))
+        .arg(format!("-mabi={}", abi))
+        .arg("-print-multi-directory")
         .output()
         .expect("Failed to execute command");
-    PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
+    PathBuf::from(String::from_utf8(output.stdout))
 }
 
 fn main() {
@@ -130,14 +131,34 @@ fn main() {
         let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
-        let compiler = match target_arch.as_str() {
-            "arm" => Some("arm-none-eabi-gcc"),
-            "riscv64" | "riscv32" => Some("riscv64-unknown-elf-gcc"),
-            _ => None,
+        let sysroot_output = cc::Build::new()
+            .get_compiler()
+            .to_command()
+            .arg("--print-sysroot")
+            .output()
+            .expect("Failed to execute command");
+        let sysroot: Option<PathBuf> = match sysroot_output.status.success() {
+            true => String::from_utf8(sysroot_output.stdout)
+                .expect("Failed to parse sysroot")
+                .trim()
+                .try_into()
+                .ok(),
+            false => None,
         };
-
-        let sysroot = compiler.map(get_sysroot);
-
+        let multi_dir_output = cc::Build::new()
+            .get_compiler()
+            .to_command()
+            .arg("--print-multi-directory")
+            .output()
+            .expect("Failed to execute command");
+        let multi_dir: Option<PathBuf> = match multi_dir_output.status.success() {
+            true => String::from_utf8(multi_dir_output.stdout)
+                .expect("Failed to parse multi-dir")
+                .trim()
+                .try_into()
+                .ok(),
+            false => None,
+        };
         generate_bindings(
             sysroot.as_ref(),
             &[PathBuf::from("iree").join("runtime").join("api.h")],
@@ -152,16 +173,15 @@ fn main() {
             let mut host_config = cmake::Config::new(&iree_path);
 
             // CMake config for host tool
-            [
+            let cmake_host_defs = vec![
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
                 ("IREE_BUILD_COMPILER", "OFF"),
                 ("IREE_BUILD_TESTS", "OFF"),
                 ("IREE_BUILD_SAMPLES", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-            ]
-            .iter()
-            .for_each(|(k, v)| {
+            ];
+            cmake_host_defs.iter().for_each(|(k, v)| {
                 host_config.define(k, v);
             });
 
@@ -173,31 +193,47 @@ fn main() {
             host_config.build();
             host_config.build_target("generate_embed_data").build();
         }
+        #[cfg(not(feature = "std"))]
+        let host_bin_dir = build_path.join("host/build/tools");
 
         let mut config = cmake::Config::new(iree_path);
 
         // CMake config for IREE runtime build
-        [
+        let mut cmake_defs = vec![
             ("IREE_BUILD_COMPILER", "OFF"),
             ("IREE_BUILD_TESTS", "OFF"),
             ("IREE_BUILD_SAMPLES", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-        ]
-        .iter()
-        .for_each(|(k, v)| {
-            config.define(k, v);
-        });
+        ];
 
-        config
-            .build_target("iree_runtime_unified")
-            .out_dir(&build_path);
+        let mut cflags = vec![];
+
+        match std::env::var("OPT_LEVEL").unwrap().as_str() {
+            "z" => {
+                cflags.push("-Oz");
+                cmake_defs.push(("IREE_SIZE_OPTIMIZED", "ON"));
+            }
+            "3" => {
+                cflags.push("-O3");
+            }
+            "2" => {
+                cflags.push("-O2");
+            }
+            "1" => {
+                cflags.push("-O1");
+            }
+            "0" => {
+                cflags.push("-O0");
+            }
+            _ => {}
+        }
 
         // If bare metal (no-std), use the following config.
         #[cfg(not(feature = "std"))]
         {
             // CMake config for no-std runtime build
-            [
+            cmake_defs.extend(vec![
                 ("IREE_ENABLE_THREADING", "OFF"),
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
                 ("IREE_HAL_DRIVER_LOCAL_SYNC", "ON"),
@@ -207,14 +243,11 @@ fn main() {
                 ("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
                 ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
+                ("IREE_HOST_BIN_DIR", host_bin_dir.to_str().unwrap()),
                 ("CMAKE_SYSTEM_NAME", "Generic"),
-            ]
-            .iter()
-            .for_each(|(k, v)| {
-                config.define(k, v);
-            });
+            ]);
             // C flags for no-std runtime build
-            [
+            cflags.extend(vec![
                 "-specs=nosys.specs",
                 "-DIREE_PLATFORM_GENERIC=1",
                 "-DIREE_FILE_IO_ENABLE=0",
@@ -229,17 +262,21 @@ fn main() {
                 "-Wno-format",
                 "-Wno-error=unused-variable",
                 "-Wl,--gc-sections",
-            ]
-            .iter()
-            .for_each(|v| {
-                config.cflag(v);
-                config.cxxflag(v);
-            });
-            config.define(
-                "IREE_HOST_BIN_DIR",
-                build_path.join("host/build/tools").to_str().unwrap(),
-            );
+            ]);
         }
+
+        cmake_defs.iter().for_each(|(k, v)| {
+            config.define(k, v);
+        });
+
+        cflags.iter().for_each(|v| {
+            config.cflag(v);
+            config.cxxflag(v);
+        });
+
+        config
+            .build_target("iree_runtime_unified")
+            .out_dir(&build_path);
 
         // Build IREE runtime
         config.build();
@@ -273,7 +310,11 @@ fn main() {
             }
 
             "none" => {
-                println!("cargo:rustc-link-search={}/lib", sysroot.unwrap().display());
+                println!(
+                    "cargo:rustc-link-search={}/lib/{}",
+                    sysroot.unwrap().display(),
+                    multi_dir.unwrap().display()
+                );
                 println!("cargo:rustc-link-lib=nosys");
                 println!("cargo:rustc-link-lib=c");
                 println!("cargo:rustc-link-lib=m");
