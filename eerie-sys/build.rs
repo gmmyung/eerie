@@ -257,10 +257,17 @@ fn main() {
                 .join("build/build_tools/third_party/flatcc")
                 .display()
         );
+        println!(
+            "cargo:rustc-link-search={}",
+            build_path
+                .join("build/third_party/cpuinfo")
+                .display()
+        );
 
         // Print order is important.
         println!("cargo:rustc-link-lib=iree_runtime_unified");
         println!("cargo:rustc-link-lib=flatcc_parsing");
+        println!("cargo:rustc-link-lib=cpuinfo");
 
         match target_os.as_str() {
             "linux" => {
