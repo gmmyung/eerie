@@ -304,6 +304,9 @@ pub struct StatusError {
     status: Status,
 }
 
+unsafe impl Send for StatusError {}
+unsafe impl Sync for StatusError {}
+
 // TODO: change this when #![feature(error_in_core)] is stabilized
 #[cfg(feature = "std")]
 impl std::error::Error for StatusError {}
