@@ -1,11 +1,11 @@
-use core::fmt::{Debug, Formatter};
+use core::{fmt::{Debug, Formatter}, mem::size_of};
 
 use eerie_sys::runtime as sys;
 use log::debug;
 
 use super::{
     api::{self, Instance},
-    base::{self, ConstByteSpan},
+    base::{self, ConstByteSpan, StatusError},
     error::RuntimeError,
     vm::{Ref, ToRef},
 };
@@ -233,6 +233,50 @@ impl<'a, T: ToElementType> BufferView<'a, T> {
 
     pub fn byte_length(&self) -> usize {
         unsafe { sys::iree_hal_buffer_view_byte_length(self.ctx) }
+    }
+
+    pub fn element_count(&self) -> usize {
+        unsafe { sys::iree_hal_buffer_view_element_count(self.ctx) }
+    }
+
+    /// Copy the buffer that is stored on `device` to the host.
+    pub fn copy_to_host(&self, device: &Device<'_>, target: &mut [T]) -> Result<(), RuntimeError> {
+        let buffer = self.get_buffer();
+
+        let buffer_length = target.len();
+        if buffer_length != self.element_count() {
+            base::Status::from_code(base::StatusErrorKind::OutOfRange).to_result()?;
+        }
+
+        let flags = sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT;
+        // Infinite timeout. This is copied from iree_infinite_timeout, which
+        // is not available because it is a static inlined function.
+        //let timeout = unsafe { sys::iree_infinite_timeout() };
+        let timeout = sys::iree_timeout_t {
+            type_: sys::iree_timeout_type_e_IREE_TIMEOUT_ABSOLUTE,
+            // TODO This should be sys::IREE_TIME_INFINITE_FUTURE, but this doesn't
+            // seem to be wrapped for some reason
+            nanos: i64::MAX,
+        };
+
+        let Some(n_bytes) = buffer_length.checked_mul(size_of::<T>()) else {
+            return Err(base::Status::from_code(base::StatusErrorKind::OutOfRange));
+        };
+
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_device_transfer_d2h(
+                device.ctx,
+                buffer,
+                0 as _,
+                target.as_mut_ptr() as _,
+                n_bytes,
+                flags,
+                timeout,
+            )
+        })
+        .to_result()?;
+
+        Ok(())
     }
 }
 

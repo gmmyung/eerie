@@ -159,6 +159,7 @@ fn main() {
                 ("IREE_BUILD_SAMPLES", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
+                ("CMAKE_BUILD_TYPE", "RelWithDebInfo"),
             ]
             .iter()
             .for_each(|(k, v)| {
@@ -183,6 +184,7 @@ fn main() {
             ("IREE_BUILD_SAMPLES", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
+            ("CMAKE_BUILD_TYPE", "RelWithDebInfo"),
         ]
         .iter()
         .for_each(|(k, v)| {
@@ -208,6 +210,7 @@ fn main() {
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
                 ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
                 ("CMAKE_SYSTEM_NAME", "Generic"),
+                ("CMAKE_BUILD_TYPE", "RelWithDebInfo"),
             ]
             .iter()
             .for_each(|(k, v)| {
@@ -257,10 +260,17 @@ fn main() {
                 .join("build/build_tools/third_party/flatcc")
                 .display()
         );
+        println!(
+            "cargo:rustc-link-search={}",
+            build_path
+                .join("build/third_party/cpuinfo")
+                .display()
+        );
 
         // Print order is important.
         println!("cargo:rustc-link-lib=iree_runtime_unified");
         println!("cargo:rustc-link-lib=flatcc_parsing");
+        println!("cargo:rustc-link-lib=cpuinfo");
 
         match target_os.as_str() {
             "linux" => {

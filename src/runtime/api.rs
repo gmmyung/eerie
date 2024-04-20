@@ -197,13 +197,14 @@ pub struct Session<'a> {
 
 // Session is thread-compatible.
 unsafe impl Send for Session<'_> {}
+unsafe impl Sync for Session<'_> {}
 
 impl<'a> Session<'a> {
     /// Creates a new session with the given options and device.
     pub fn create_with_device(
         instance: &'a Instance,
         options: &SessionOptions,
-        device: &'a super::hal::Device,
+        device: &super::hal::Device,
     ) -> Result<Self, RuntimeError> {
         let mut out_ptr = core::ptr::null_mut();
         let allocator = instance.get_host_allocator();
