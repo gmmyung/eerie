@@ -20,7 +20,6 @@ members = [
 
 [dev-dependencies]
 anyhow = "1.0.75"
-rusty-fork = "0.3.0"
 test-log = { version = "0.2.12" }
 env_logger = "0.11.1"
 
