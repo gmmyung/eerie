@@ -126,11 +126,12 @@ fn main() {
             .output()
             .expect("Failed to execute command");
         let sysroot: Option<PathBuf> = match sysroot_output.status.success() {
-            true => String::from_utf8(sysroot_output.stdout)
-                .expect("Failed to parse sysroot")
-                .trim()
-                .try_into()
-                .ok(),
+            true => Some(
+                String::from_utf8(sysroot_output.stdout)
+                    .expect("Failed to parse sysroot")
+                    .trim()
+                    .into(),
+            ),
             false => None,
         };
         let multi_dir_output = cc::Build::new()
@@ -140,11 +141,12 @@ fn main() {
             .output()
             .expect("Failed to execute command");
         let multi_dir: Option<PathBuf> = match multi_dir_output.status.success() {
-            true => String::from_utf8(multi_dir_output.stdout)
-                .expect("Failed to parse multi-dir")
-                .trim()
-                .try_into()
-                .ok(),
+            true => Some(
+                String::from_utf8(multi_dir_output.stdout)
+                    .expect("Failed to parse multi-dir")
+                    .trim()
+                    .into(),
+            ),
             false => None,
         };
         generate_bindings(

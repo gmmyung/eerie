@@ -163,7 +163,7 @@ mod test {
     #[test]
     fn output_byte_code() {
         init_compiler();
-        let mut compiler = COMPILER.lock().unwrap();
+        let compiler = COMPILER.lock().unwrap();
         let mut session = compiler.as_ref().unwrap().create_session();
         session
             .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()])
