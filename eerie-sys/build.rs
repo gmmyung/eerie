@@ -47,17 +47,6 @@ fn generate_bindings(
     }
 }
 
-#[cfg(not(feature = "runtime"))]
-fn get_multi_dir(compiler: &str, arch: &str, abi: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new(compiler)
-        .arg(format!("-march={}", arch))
-        .arg(format!("-mabi={}", abi))
-        .arg("-print-multi-directory")
-        .output()
-        .expect("Failed to execute command");
-    PathBuf::from(String::from_utf8(output.stdout))
-}
-
 fn main() {
     let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -128,7 +117,6 @@ fn main() {
     {
         let build_path = out_path.join("runtime_build");
 
-        let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
         let sysroot_output = cc::Build::new()
