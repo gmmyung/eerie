@@ -99,13 +99,24 @@ mod integration_tests {
     use eerie::runtime::hal::{BufferMapping, BufferView, EncodingType};
     use eerie::runtime::vm::{List, ToRef};
     use log::{debug, info};
-    use rusty_fork::rusty_fork_test;
     use std::path::Path;
-    rusty_fork_test! {
+    use std::sync::Mutex;
+
+    static COMPILER: Mutex<Option<compiler::Compiler>> = Mutex::new(None);
+
+    fn init_compiler() {
+        let mut global_compiler = COMPILER.lock().unwrap();
+        if global_compiler.is_none() {
+            let compiler = compiler::Compiler::new().unwrap();
+            *global_compiler = Some(compiler);
+        }
+    }
+
     #[test]
     fn append_module() {
-        let compiler = compiler::Compiler::new().unwrap();
-        let mut compiler_session = compiler.create_session();
+        init_compiler();
+        let compiler = COMPILER.lock().unwrap();
+        let mut compiler_session = compiler.as_ref().unwrap().create_session();
         compiler_session
             .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()])
             .unwrap();
@@ -113,7 +124,7 @@ mod integration_tests {
             .create_source_from_file(Path::new("tests/mul.mlir"))
             .unwrap();
         let mut invocation = compiler_session.create_invocation();
-        let mut output = compiler::MemBufferOutput::new(&compiler).unwrap();
+        let mut output = compiler::MemBufferOutput::new(compiler.as_ref().unwrap()).unwrap();
         invocation
             .parse_source(source)
             .unwrap()
@@ -172,21 +183,25 @@ mod integration_tests {
             &[100],
             EncodingType::DenseRowMajor,
             vec.as_slice(),
-        ).unwrap();
+        )
+        .unwrap();
         let input_list =
-            runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(1, &instance).unwrap();
+            runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(1, &instance)
+                .unwrap();
         input_list
             .push_ref(&input.to_ref(&instance).unwrap())
             .unwrap();
         input_list
             .push_ref(&input.to_ref(&instance).unwrap())
             .unwrap();
-        let output_list = runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(0, &instance).unwrap();
+        let output_list =
+            runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(0, &instance)
+                .unwrap();
         let function = session.lookup_function("arithmetic.simple_mul").unwrap();
         function.invoke(&input_list, &output_list).unwrap();
         let output = output_list.get_ref(0).unwrap();
-        let output_mapping: BufferMapping<f32> = runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
+        let output_mapping: BufferMapping<f32> =
+            runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
         info!("Output: {:?}", output_mapping.data());
-    }
     }
 }

@@ -53,6 +53,7 @@ pub fn get_api_version() -> (u16, u16) {
 }
 
 static IS_INITIALIZED: OnceLock<()> = OnceLock::new();
+static GLOBAL_CL_IS_SET: OnceLock<()> = OnceLock::new();
 
 /// The IREE compiler. The compiler is globally initialized when it is created. It can not be
 /// instantiated more than once.
@@ -85,26 +86,32 @@ impl Compiler {
     }
 
     /// Initializes the command line environment from an explicit argc/argv
+    /// The function returns GlobalCLAlreadySet if called more than once.
     /// This uses dark magic to setup the usual array of expected signal handlers.
     /// This API is not yet considered version-stable. If using out of tree, please
     /// contact the developers.
     pub fn setup_global_cl(&mut self, argv: Vec<String>) -> Result<&mut Self, CompilerError> {
-        let c_str_vec = argv
-            .iter()
-            .map(|arg| std::ffi::CString::new(arg.as_str()))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
-        let banner = std::ffi::CString::new("IREE Compiler")?;
-        unsafe {
-            sys::ireeCompilerSetupGlobalCL(
-                argv.len() as i32,
-                ptr_array.as_mut_ptr(),
-                banner.as_ptr(),
-                false,
-            )
+        match GLOBAL_CL_IS_SET.set(()) {
+            Ok(_) => {
+                let c_str_vec = argv
+                    .iter()
+                    .map(|arg| std::ffi::CString::new(arg.as_str()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
+                let banner = std::ffi::CString::new("IREE Compiler")?;
+                unsafe {
+                    sys::ireeCompilerSetupGlobalCL(
+                        argv.len() as i32,
+                        ptr_array.as_mut_ptr(),
+                        banner.as_ptr(),
+                        false,
+                    )
+                }
+                debug!("Global CL setup");
+                Ok(self)
+            }
+            Err(_) => Err(CompilerError::GlobalCLAlreadySet),
         }
-        debug!("Global CL setup");
-        Ok(self)
     }
 
     extern "C" fn capture_registered_hal_target_backend_callback(
@@ -968,6 +975,8 @@ impl<'a> MemBufferOutput<'a> {
 pub enum CompilerError {
     #[error("Compiler initialized more than once")]
     AlreadyInitialized,
+    #[error("Global CL already set")]
+    GlobalCLAlreadySet,
     #[error("CString contains a null byte")]
     NulError(#[from] std::ffi::NulError),
     #[error("Invalid UTF-8 sequence")]

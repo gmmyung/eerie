@@ -42,6 +42,7 @@ exclude = [
 [build-dependencies]
 bindgen = "0.69.4"
 cmake = "0.1.50"
+cc = "1.0.90"
 
 [features]
 default = ["compiler", "runtime", "std"]

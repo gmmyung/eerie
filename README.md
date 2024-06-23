@@ -32,6 +32,7 @@ module @arithmetic {
 }
 ```
 ```rust
+#[cfg(all(feature = "std", feature = "compiler"))]
 fn output_vmfb() -> Vec<u8> {
     use eerie::compiler::*;
     use std::path::Path;
@@ -60,6 +61,7 @@ fn output_vmfb() -> Vec<u8> {
 ```
 Running the tensor operation in a IREE runtime environment
 ```rust
+#[cfg(feature = "runtime")]
 fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     use eerie::runtime::*;
     use eerie::runtime::vm::{List, ToRef};
