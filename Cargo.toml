@@ -28,8 +28,3 @@ default = ["runtime", "compiler", "std"]
 runtime = ["eerie-sys/runtime"]
 compiler = ["eerie-sys/compiler", "std"]
 std = ["dep:thiserror", "eerie-sys/std"]
-
-[[example]]
-name = "resnet"
-test = false
-bench = true

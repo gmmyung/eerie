@@ -61,49 +61,7 @@ fn output_vmfb() -> Vec<u8> {
 ```
 Running the tensor operation in a IREE runtime environment
 ```rust
-#[cfg(feature = "runtime")]
-fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
-    use eerie::runtime::*;
-    use eerie::runtime::vm::{List, ToRef};
-    let instance = api::Instance::new(
-        &api::InstanceOptions::new(&mut hal::DriverRegistry::new())
-            .use_all_available_drivers(),
-    )
-    .unwrap();
-    let device = instance
-        .try_create_default_device("local-task")
-        .expect("Failed to create device");
-    let session = api::Session::create_with_device(
-        &instance,
-        &api::SessionOptions::default(),
-        &device,
-    )
-    .unwrap();
-    unsafe { session.append_module_from_memory(vmfb) }.unwrap();
-    let function = session.lookup_function("arithmetic.simple_mul").unwrap();
-    let input_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
-        2, &instance,
-        )
-        .unwrap();
-    let input_buffer = hal::BufferView::<f32>::new(
-        &session,
-        &[4],
-        hal::EncodingType::DenseRowMajor,
-        &[1.0, 2.0, 3.0, 4.0]
-    ).unwrap();
-    let input_buffer_ref = input_buffer.to_ref(&instance).unwrap();
-    input_list.push_ref(&input_buffer_ref).unwrap();
-    let output_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
-        1, &instance,
-        )
-        .unwrap();
-    function.invoke(&input_list, &output_list).unwrap();
-    let output_buffer_ref = output_list.get_ref(0).unwrap();
-    let output_buffer: hal::BufferView<f32> = output_buffer_ref.to_buffer_view(&session);
-    let output_mapping = hal::BufferMapping::new(output_buffer).unwrap();
-    let out = output_mapping.data().to_vec();
-    out
-}
+
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
 

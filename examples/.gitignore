@@ -1,6 +1,0 @@
-resnet50
-resnet50.mlir
-*.png
-*.jpg
-*.bin
-id2label.txt
