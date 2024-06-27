@@ -40,3 +40,7 @@ impl VmTypeDef {
         VmTypeDef { ctx: result }
     }
 }
+
+pub trait ToVmTypeDef {
+    fn to_type_def() -> VmTypeDef;
+}

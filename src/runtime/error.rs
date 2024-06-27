@@ -6,6 +6,8 @@ use super::base;
 pub enum RuntimeError {
     #[error("IREE runtime error: {0}")]
     StatusError(#[from] base::status::StatusError),
-    #[error("Iree runtime error: Module index out of bounds")]
+    #[error("IREE runtime error: Module index ({0}) out of bounds")]
     OutOfBounds(usize),
+    #[error("IREE runtime error: Value type mismatch")]
+    ValueTypeMismatch,
 }
