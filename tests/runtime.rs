@@ -4,6 +4,7 @@ use eerie::runtime::{
     hal::BufferView,
     vm::{List, ToRef, ToValue, Value},
 };
+use half::f16;
 use log::{debug, info};
 use test_log::test;
 
@@ -90,6 +91,47 @@ fn ref_list() {
 
     let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view(&session)).unwrap();
     info!("mapping: {:?}", mapping.data());
+}
+
+#[test]
+fn fp16_buffer() {
+    let instance = runtime::api::Instance::new(
+        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
+            .use_all_available_drivers(),
+    )
+    .unwrap();
+    let device = instance
+        .try_create_default_device("local-sync")
+        .expect("Failed to create device");
+    let session = runtime::api::Session::create_with_device(
+        &instance,
+        &runtime::api::SessionOptions::default(),
+        &device,
+    )
+    .unwrap();
+    let buffer = BufferView::<f16>::new(
+        &session,
+        &[2, 2],
+        runtime::hal::EncodingType::DenseRowMajor,
+        &[
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0),
+        ],
+    )
+    .unwrap();
+
+    let mapping = runtime::hal::BufferMapping::new(buffer).unwrap();
+    assert_eq!(
+        mapping.data(),
+        &[
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0)
+        ]
+    );
 }
 
 #[cfg(feature = "compiler")]

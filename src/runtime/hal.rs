@@ -10,6 +10,8 @@ use super::{
     vm::{Ref, ToRef},
 };
 
+use half::{bf16, f16};
+
 /// A driver registry.
 pub struct DriverRegistry {
     pub(crate) ctx: *mut sys::iree_hal_driver_registry_t,
@@ -165,6 +167,12 @@ impl_to_element_type!(i64, Sint64);
 impl_to_element_type!(f32, Float32);
 impl_to_element_type!(f64, Float64);
 impl_to_element_type!(bool, Bool8);
+
+// f16 and bf16 are not supported native by Rust.
+// https://github.com/rust-lang/rust/issues/116909
+// External crate, half, is available to use.
+impl_to_element_type!(f16, Float16);
+impl_to_element_type!(bf16, BFloat16);
 
 /// A shaped and typed view into a storage buffer.
 /// This is the closest thing to a "tensor" we have.
