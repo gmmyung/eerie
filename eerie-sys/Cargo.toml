@@ -49,4 +49,5 @@ default = ["compiler", "runtime", "std"]
 compiler = []
 runtime = []
 std = []
+cuda = []
 

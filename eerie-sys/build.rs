@@ -195,8 +195,10 @@ fn main() {
             ("IREE_BUILD_SAMPLES", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-            ("IREE_HAL_DRIVER_CUDA", "ON"),
         ];
+
+        #[cfg(feature = "cuda")]
+        cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
 
         let mut cflags = vec![];
 
