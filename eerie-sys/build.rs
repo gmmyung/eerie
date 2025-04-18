@@ -197,6 +197,9 @@ fn main() {
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
         ];
 
+        #[cfg(feature = "cuda")]
+        cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
+
         let mut cflags = vec![];
 
         match std::env::var("OPT_LEVEL").unwrap().as_str() {

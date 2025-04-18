@@ -28,6 +28,7 @@ default = ["runtime", "compiler", "std"]
 runtime = ["eerie-sys/runtime"]
 compiler = ["eerie-sys/compiler", "std"]
 std = ["dep:thiserror", "eerie-sys/std"]
+cuda = ["eerie-sys/cuda"]
 
 [[example]]
 name = "resnet"
