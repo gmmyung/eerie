@@ -172,6 +172,20 @@ impl Type for Undefined {
     }
 }
 
+
+/// A Ref of any type.
+pub struct AnyRef;
+
+impl Type for AnyRef {
+    fn to_raw(instance: &Instance) -> sys::iree_vm_type_def_t {
+        let mut out = sys::iree_vm_type_def_t::default();
+        out.set_value_type_bits(sys::iree_vm_value_type_e_IREE_VM_VALUE_TYPE_NONE as usize);
+        out.set_ref_type_bits(sys::iree_vm_ref_type_bits_t_IREE_VM_REF_TYPE_ANY as usize >> sys::IREE_VM_REF_TYPE_TAG_BITS as usize);
+        
+        out
+    }
+}
+
 pub(crate) trait IsList<'a, T: Type> {
     fn to_raw(&self) -> *mut sys::iree_vm_list_t;
 
