@@ -39,6 +39,10 @@ exclude = [
     "iree/tests/transform_dialect",
 ]
 
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["std"]
+
 [build-dependencies]
 bindgen = "0.72"
 cmake = "0.1"
