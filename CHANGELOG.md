@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 - 2026-06-15
+
+### Fixed
+
+- Published `eerie-sys` `0.3.2` with IREE libbacktrace disabled in runtime CMake builds so docs.rs can build `std + runtime` documentation offline.
+- Updated `eerie` to depend on `eerie-sys` `0.3.2`.
+
 ## 0.3.2 - 2026-06-15
 
 ### Fixed

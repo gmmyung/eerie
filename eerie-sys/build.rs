@@ -203,6 +203,7 @@ fn main() {
             // CMake config for host tool
             let cmake_host_defs = [
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
+                ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
                 ("IREE_BUILD_COMPILER", "OFF"),
                 ("IREE_BUILD_TESTS", "OFF"),
                 ("IREE_BUILD_SAMPLES", "OFF"),
@@ -229,6 +230,7 @@ fn main() {
 
         // CMake config for IREE runtime build
         let mut cmake_defs = vec![
+            ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
             ("IREE_BUILD_COMPILER", "OFF"),
             ("IREE_BUILD_TESTS", "OFF"),
             ("IREE_BUILD_SAMPLES", "OFF"),
