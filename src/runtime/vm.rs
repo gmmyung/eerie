@@ -2,6 +2,8 @@ extern crate alloc;
 
 use alloc::{rc::Rc, string::String, vec::Vec};
 use core::marker::PhantomData;
+#[cfg(feature = "std")]
+use std::sync::Mutex;
 
 use eerie_sys::runtime as sys;
 use log::trace;
@@ -12,12 +14,46 @@ use super::{
     hal::{BufferElement, BufferView, Device, Tensor},
 };
 
+#[cfg(feature = "std")]
+static HAL_TYPE_ADAPTER_LOCK: Mutex<()> = Mutex::new(());
+
 fn string_view_to_string(value: sys::iree_string_view_t) -> String {
     if value.data.is_null() || value.size == 0 {
         return String::new();
     }
     let bytes = unsafe { core::slice::from_raw_parts(value.data as *const u8, value.size) };
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn resolve_hal_types(instance: &Instance) -> Result<(), RuntimeError> {
+    base::Status::from_raw(unsafe { sys::iree_hal_module_resolve_all_types(instance.ctx) })
+        .to_result()
+        .map_err(Into::into)
+}
+
+#[cfg(feature = "std")]
+fn with_hal_type_adapter_lock<T>(
+    f: impl FnOnce() -> Result<T, RuntimeError>,
+) -> Result<T, RuntimeError> {
+    let _guard = HAL_TYPE_ADAPTER_LOCK.lock().unwrap();
+    f()
+}
+
+#[cfg(not(feature = "std"))]
+fn with_hal_type_adapter_lock<T>(
+    f: impl FnOnce() -> Result<T, RuntimeError>,
+) -> Result<T, RuntimeError> {
+    critical_section::with(|_| f())
+}
+
+fn with_hal_type_adapters<T>(
+    instance: &Instance,
+    f: impl FnOnce() -> Result<T, RuntimeError>,
+) -> Result<T, RuntimeError> {
+    with_hal_type_adapter_lock(|| {
+        resolve_hal_types(instance)?;
+        f()
+    })
 }
 
 /// A VM instance owns registered VM ref types and VM-level host allocation.
@@ -37,9 +73,13 @@ impl Instance {
             )
         })
         .to_result()?;
-        base::Status::from_raw(unsafe { sys::iree_hal_module_register_all_types(ctx) })
-            .to_result()?;
-        Ok(Self { ctx })
+        let instance = Self { ctx };
+        with_hal_type_adapter_lock(|| {
+            base::Status::from_raw(unsafe { sys::iree_hal_module_register_all_types(ctx) })
+                .to_result()?;
+            resolve_hal_types(&instance)
+        })?;
+        Ok(instance)
     }
 
     pub(crate) fn allocator(&self) -> base::Allocator {
@@ -80,35 +120,37 @@ pub struct Module {
 impl Module {
     /// Creates the IREE HAL VM module bound to `device`.
     pub fn hal(instance: &Instance, device: &Device) -> Result<Self, RuntimeError> {
-        let mut ctx = core::ptr::null_mut();
-        let mut device_group = core::ptr::null_mut();
-        base::Status::from_raw(unsafe {
-            sys::iree_hal_device_group_create_from_device(
-                device.ctx,
-                instance.allocator().ctx,
-                &mut device_group,
-            )
-        })
-        .to_result()?;
-        let status = base::Status::from_raw(unsafe {
-            sys::iree_hal_module_create(
-                instance.ctx,
-                sys::iree_hal_module_device_policy_default(),
-                device_group,
-                sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
-                sys::iree_hal_module_debug_sink_null(),
-                instance.allocator().ctx,
-                &mut ctx,
-            )
-        });
-        unsafe {
-            sys::iree_hal_device_group_release(device_group);
-        }
-        status.to_result()?;
-        Ok(Self {
-            ctx,
-            instance: instance.clone(),
-            archive: None,
+        with_hal_type_adapters(instance, || {
+            let mut ctx = core::ptr::null_mut();
+            let mut device_group = core::ptr::null_mut();
+            base::Status::from_raw(unsafe {
+                sys::iree_hal_device_group_create_from_device(
+                    device.ctx,
+                    instance.allocator().ctx,
+                    &mut device_group,
+                )
+            })
+            .to_result()?;
+            let status = base::Status::from_raw(unsafe {
+                sys::iree_hal_module_create(
+                    instance.ctx,
+                    sys::iree_hal_module_device_policy_default(),
+                    device_group,
+                    sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
+                    sys::iree_hal_module_debug_sink_null(),
+                    instance.allocator().ctx,
+                    &mut ctx,
+                )
+            });
+            unsafe {
+                sys::iree_hal_device_group_release(device_group);
+            }
+            status.to_result()?;
+            Ok(Self {
+                ctx,
+                instance: instance.clone(),
+                archive: None,
+            })
         })
     }
 
@@ -447,20 +489,22 @@ impl Function {
         I: Type,
         O: Type,
     {
-        base::Status::from_raw(unsafe {
-            trace!("iree_vm_invoke");
-            sys::iree_vm_invoke(
-                self.context.ctx,
-                self.ctx,
-                sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
-                core::ptr::null(),
-                inputs.ctx,
-                outputs.ctx,
-                self.context.instance.allocator().ctx,
-            )
+        with_hal_type_adapters(&self.context.instance, || {
+            base::Status::from_raw(unsafe {
+                trace!("iree_vm_invoke");
+                sys::iree_vm_invoke(
+                    self.context.ctx,
+                    self.ctx,
+                    sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
+                    core::ptr::null(),
+                    inputs.ctx,
+                    outputs.ctx,
+                    self.context.instance.allocator().ctx,
+                )
+            })
+            .to_result()
+            .map_err(Into::into)
         })
-        .to_result()
-        .map_err(Into::into)
     }
 
     /// Invokes a function with homogeneous typed tensor inputs and outputs.

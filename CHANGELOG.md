@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2 - 2026-06-15
+
+### Fixed
+
+- Fixed HAL VM ref type races when multiple VM instances are created or invoked in the same process.
+- Rebound IREE's process-global HAL type adapters to the active VM instance around HAL module creation and invocation.
+- Removed runtime test serialization and added stale-instance/concurrent-invocation regression coverage.
+
+### Notes
+
+- `eerie-sys` remains at `0.3.1`; this patch only changes the safe wrapper crate.
+
 ## 0.3.1 - 2026-06-15
 
 ### Fixed

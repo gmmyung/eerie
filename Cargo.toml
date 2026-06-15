@@ -1,6 +1,6 @@
 [package]
 name = "eerie"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Gyungmin Myung"]
@@ -17,6 +17,7 @@ eerie-sys = { path = "eerie-sys", version = "0.3.1", default-features = false }
 thiserror = { version = "2.0", optional = true }
 log = "0.4"
 half = { version = "2.7", default-features = false }
+critical-section = { version = "1.2", optional = true }
 libm = { version = "0.2", default-features = false, optional = true }
 tinyrlibc = { version = "0.5.1", default-features = false, features = [
     "abs",
@@ -45,7 +46,7 @@ env_logger = "0.11"
 
 [features]
 default = ["runtime", "compiler", "std"]
-runtime = ["eerie-sys/runtime", "dep:libm", "dep:tinyrlibc"]
+runtime = ["eerie-sys/runtime", "dep:critical-section", "dep:libm", "dep:tinyrlibc"]
 compiler = ["eerie-sys/compiler", "std"]
 std = ["dep:thiserror", "eerie-sys/std"]
 cuda = ["eerie-sys/cuda"]
