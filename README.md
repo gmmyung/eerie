@@ -64,45 +64,23 @@ Running the tensor operation in a IREE runtime environment
 #[cfg(feature = "runtime")]
 fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     use eerie::runtime::*;
-    use eerie::runtime::vm::{List, ToRef};
-    let instance = api::Instance::new(
-        &api::InstanceOptions::new(&mut hal::DriverRegistry::new())
-            .use_all_available_drivers(),
-    )
-    .unwrap();
-    let device = instance
-        .try_create_default_device("local-task")
-        .expect("Failed to create device");
-    let session = api::Session::create_with_device(
-        &instance,
-        &api::SessionOptions::default(),
+
+    let instance = vm::Instance::new().unwrap();
+    let registry = hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver("local-task").unwrap();
+    let device = driver.create_default_device().unwrap();
+    let hal_module = vm::Module::hal(&instance, &device).unwrap();
+    let bytecode_module = vm::Module::bytecode(&instance, vmfb).unwrap();
+    let context = vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
+    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
+
+    let input = hal::Tensor::<f32>::from_slice(
         &device,
-    )
-    .unwrap();
-    unsafe { session.append_module_from_memory(vmfb) }.unwrap();
-    let function = session.lookup_function("arithmetic.simple_mul").unwrap();
-    let input_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
-        2, &instance,
-        )
-        .unwrap();
-    let input_buffer = hal::BufferView::<f32>::new(
-        &session,
         &[4],
-        hal::EncodingType::DenseRowMajor,
         &[1.0, 2.0, 3.0, 4.0]
     ).unwrap();
-    let input_buffer_ref = input_buffer.to_ref(&instance).unwrap();
-    input_list.push_ref(&input_buffer_ref).unwrap();
-    let output_list = vm::DynamicList::<vm::Ref<hal::BufferView<f32>>>::new(
-        1, &instance,
-        )
-        .unwrap();
-    function.invoke(&input_list, &output_list).unwrap();
-    let output_buffer_ref = output_list.get_ref(0).unwrap();
-    let output_buffer: hal::BufferView<f32> = output_buffer_ref.to_buffer_view(&session);
-    let output_mapping = hal::BufferMapping::new(output_buffer).unwrap();
-    let out = output_mapping.data().to_vec();
-    out
+    let outputs = function.invoke_tensors(&[&input, &input], 1).unwrap();
+    outputs[0].read_to_vec(&device).unwrap()
 }
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
@@ -117,13 +95,18 @@ Eerie builds the IREE runtime from source during compilation. CMake, Clang are r
 Install XCode and MacOS SDKs.
 
 #### No-std
-The runtime library can be compiled without the default `std` feature. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`), and a pre-compiled `Newlib` binary in the sysroot. 
+The runtime library can be compiled without the default `std` feature for bare-metal targets. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`) and a Rust target with `alloc` support. The embedded runtime path uses Rust `compiler_builtins`, `libm`, `tinyrlibc`, and a small `critical-section` backed synchronization shim instead of linking `libc`, `libm`, `nosys`, or pthreads.
+
+Targets must provide:
+- a global allocator
+- a `critical-section` implementation, such as the `cortex-m` `critical-section-single-core` feature
+- a linker script and startup/runtime appropriate for the board or emulator
 
 
 ### Compiler
-The user must source the precompiled shared library. (This is necessary because it takes ~20 min to build the compiler) The shared library can be sourced from a python package installation of iree-compiler.
+The user must source the precompiled shared library. (This is necessary because it takes ~20 min to build the compiler) The shared library can be sourced from a python package installation of iree-base-compiler.
 ```sh
-pip3 install iree-compiler
+pip3 install iree-base-compiler==3.11.0
 ```
 
 In order to export the installed library location, run this script:

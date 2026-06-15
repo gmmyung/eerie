@@ -1,6 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "compiler")]
 fn generate_bindings(
     sysroot: Option<&PathBuf>,
     headers: &[PathBuf],
@@ -31,7 +32,6 @@ fn generate_bindings(
                 .clang_arg("-Wno-format")
                 .clang_arg("-Wno-implicit-function-declaration")
                 .clang_arg("-Wno-unused-variable")
-                .clang_arg("-DIREE_SYNCHRONIZATION_DISABLE_UNSAFE=1")
                 .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
         }
 
@@ -47,14 +47,56 @@ fn generate_bindings(
     }
 }
 
+fn generate_binding(
+    sysroot: Option<&PathBuf>,
+    header_path: &Path,
+    include_path: &Path,
+    bindings_path: &Path,
+    additional_include_paths: &[PathBuf],
+) {
+    println!("cargo:rerun-if-changed={}", header_path.display());
+    let mut builder = bindgen::Builder::default()
+        .header(header_path.display().to_string())
+        .clang_arg(format!("-I{}", include_path.display()))
+        .derive_default(true)
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+    #[cfg(not(feature = "std"))]
+    {
+        builder = builder
+            .use_core()
+            .clang_arg("-DIREE_PLATFORM_GENERIC=1")
+            .clang_arg("-Wno-char-subscripts")
+            .clang_arg("-Wno-format")
+            .clang_arg("-Wno-implicit-function-declaration")
+            .clang_arg("-Wno-unused-variable")
+            .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
+    }
+
+    for additional_include_path in additional_include_paths {
+        println!(
+            "cargo:rerun-if-changed={}",
+            additional_include_path.display()
+        );
+        builder = builder.clang_arg(format!("-I{}", additional_include_path.display()));
+    }
+
+    if let Some(sysroot) = sysroot {
+        builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+    }
+
+    builder
+        .generate()
+        .expect("Unable to generate bindings")
+        .write_to_file(bindings_path)
+        .expect("Couldn't write bindings!");
+}
+
 fn main() {
     let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    #[cfg(all(target_os = "none", feature = "std"))]
-    {
-        compile_error!("The std feature cannot be used in a no-std environment");
-    }
+    let bare_metal_sync_include_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bare_metal_sync/include");
 
     // The compiler feature enables the IREE compiler features. The IREE compiler binaries should
     // be downloaded from an external source such as pypi, and the downloaded binaries should be
@@ -82,7 +124,7 @@ fn main() {
             // and sets the LIB_IREE_COMPILER environment variable
 
             std::process::Command::new("pip3")
-                .args(["install", "iree-compiler"])
+                .args(["install", "iree-base-compiler==3.11.0"])
                 .status()
                 .map_err(|e| format!("Failed to install IREE compiler: {}", e))
                 .unwrap();
@@ -115,9 +157,15 @@ fn main() {
     // clang/llvm. Other compilers can be used as well, but clang is recommended when cross-compiling.
     #[cfg(feature = "runtime")]
     {
-        let build_path = out_path.join("runtime_build");
-
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+        let bare_metal = target_os == "none";
+        if bare_metal && cfg!(feature = "std") {
+            panic!("The std feature cannot be used for target_os = \"none\"");
+        }
+        let build_path =
+            out_path
+                .join("runtime_build")
+                .join(if bare_metal { "bare_metal" } else { "hosted" });
 
         let sysroot_output = cc::Build::new()
             .get_compiler()
@@ -134,36 +182,26 @@ fn main() {
             ),
             false => None,
         };
-        let multi_dir_output = cc::Build::new()
-            .get_compiler()
-            .to_command()
-            .arg("--print-multi-directory")
-            .output()
-            .expect("Failed to execute command");
-        let multi_dir: Option<PathBuf> = match multi_dir_output.status.success() {
-            true => Some(
-                String::from_utf8(multi_dir_output.stdout)
-                    .expect("Failed to parse multi-dir")
-                    .trim()
-                    .into(),
-            ),
-            false => None,
-        };
-        generate_bindings(
+        generate_binding(
             sysroot.as_ref(),
-            &[PathBuf::from("iree").join("runtime").join("api.h")],
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime_api.h"),
             &iree_path.join("runtime").join("src"),
-            &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime"),
+            &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime.rs"),
+            if bare_metal {
+                std::slice::from_ref(&bare_metal_sync_include_path)
+            } else {
+                &[]
+            },
         );
 
-        // The build process requires runtime tools: iree-flatcc-cli and generate_embed_data
-        // So there has to be a host tool build before the actual runtime build in no-std builds.
-        #[cfg(not(feature = "std"))]
-        {
+        // The bare-metal build process requires runtime tools: iree-flatcc-cli and
+        // iree-c-embed-data, so there has to be a host tool build before the
+        // actual runtime cross-build.
+        let host_bin_dir = if bare_metal {
             let mut host_config = cmake::Config::new(&iree_path);
 
             // CMake config for host tool
-            let cmake_host_defs = vec![
+            let cmake_host_defs = [
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
                 ("IREE_BUILD_COMPILER", "OFF"),
                 ("IREE_BUILD_TESTS", "OFF"),
@@ -179,12 +217,13 @@ fn main() {
             host_config
                 .target(&std::env::var("HOST").unwrap())
                 .build_target("iree-flatcc-cli")
-                .out_dir(&build_path.join("host"));
+                .out_dir(build_path.join("host"));
             host_config.build();
-            host_config.build_target("generate_embed_data").build();
-        }
-        #[cfg(not(feature = "std"))]
-        let host_bin_dir = build_path.join("host/build/tools");
+            host_config.build_target("iree-c-embed-data").build();
+            Some(build_path.join("host/build/tools"))
+        } else {
+            None
+        };
 
         let mut config = cmake::Config::new(iree_path);
 
@@ -204,27 +243,26 @@ fn main() {
 
         match std::env::var("OPT_LEVEL").unwrap().as_str() {
             "z" => {
-                cflags.push("-Oz");
+                cflags.push("-Oz".to_string());
                 cmake_defs.push(("IREE_SIZE_OPTIMIZED", "ON"));
             }
             "3" => {
-                cflags.push("-O3");
+                cflags.push("-O3".to_string());
             }
             "2" => {
-                cflags.push("-O2");
+                cflags.push("-O2".to_string());
             }
             "1" => {
-                cflags.push("-O1");
+                cflags.push("-O1".to_string());
             }
             "0" => {
-                cflags.push("-O0");
+                cflags.push("-O0".to_string());
             }
             _ => {}
         }
 
-        // If bare metal (no-std), use the following config.
-        #[cfg(not(feature = "std"))]
-        {
+        // If bare metal, use the following config.
+        if bare_metal {
             // CMake config for no-std runtime build
             cmake_defs.extend(vec![
                 ("IREE_ENABLE_THREADING", "OFF"),
@@ -236,26 +274,33 @@ fn main() {
                 ("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
                 ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
-                ("IREE_HOST_BIN_DIR", host_bin_dir.to_str().unwrap()),
+                (
+                    "IREE_HOST_BIN_DIR",
+                    host_bin_dir.as_ref().unwrap().to_str().unwrap(),
+                ),
                 ("CMAKE_SYSTEM_NAME", "Generic"),
+                ("CMAKE_TRY_COMPILE_TARGET_TYPE", "STATIC_LIBRARY"),
             ]);
             // C flags for no-std runtime build
-            cflags.extend(vec![
-                "-specs=nosys.specs",
-                "-DIREE_PLATFORM_GENERIC=1",
-                "-DIREE_FILE_IO_ENABLE=0",
-                "-DIREE_SYNCHRONIZATION_DISABLE_UNSAFE=1",
-                "-DIREE_TIME_NOW_FN=\"{return 0; }\"",
-                "-D'IREE_WAIT_UNTIL_FN(n)=false'",
-                "-DFLATCC_USE_GENERIC_ALIGNED_ALLOC",
-                "-DIREE_STATUS_FEATURES=0",
-                "-fdata-sections",
-                "-ffunction-sections",
-                "-Wno-char-subscripts",
-                "-Wno-format",
-                "-Wno-error=unused-variable",
-                "-Wl,--gc-sections",
-            ]);
+            cflags.push(format!("-I{}", bare_metal_sync_include_path.display()));
+            cflags.extend(
+                [
+                    "-DIREE_PLATFORM_GENERIC=1",
+                    "-DIREE_FILE_IO_ENABLE=0",
+                    "-DIREE_TIME_NOW_FN=\"{return 0; }\"",
+                    "-D'IREE_WAIT_UNTIL_FN(n)=false'",
+                    "-DFLATCC_USE_GENERIC_ALIGNED_ALLOC",
+                    "-DIREE_STATUS_FEATURES=0",
+                    "-fdata-sections",
+                    "-ffunction-sections",
+                    "-Wno-char-subscripts",
+                    "-Wno-format",
+                    "-Wno-error=unused-variable",
+                    "-Wl,--gc-sections",
+                ]
+                .into_iter()
+                .map(String::from),
+            );
         }
 
         cmake_defs.iter().for_each(|(k, v)| {
@@ -287,9 +332,16 @@ fn main() {
                 .join("build/build_tools/third_party/flatcc")
                 .display()
         );
+        println!(
+            "cargo:rustc-link-search={}",
+            build_path
+                .join("build/build_tools/third_party/printf")
+                .display()
+        );
 
         // Print order is important.
         println!("cargo:rustc-link-lib=iree_runtime_unified");
+        println!("cargo:rustc-link-lib=printf_printf");
         println!("cargo:rustc-link-lib=flatcc_parsing");
 
         match target_os.as_str() {
@@ -303,14 +355,7 @@ fn main() {
             }
 
             "none" => {
-                println!(
-                    "cargo:rustc-link-search={}/lib/{}",
-                    sysroot.unwrap().display(),
-                    multi_dir.unwrap().display()
-                );
-                println!("cargo:rustc-link-lib=nosys");
-                println!("cargo:rustc-link-lib=c");
-                println!("cargo:rustc-link-lib=m");
+                println!("cargo:rustc-link-lib=gcc");
             }
             _ => {
                 panic!("Only Linux, macOS, and no-std targets are supported");

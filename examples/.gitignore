@@ -4,3 +4,5 @@ resnet50.mlir
 *.jpg
 *.bin
 id2label.txt
+.venv/
+__pycache__/

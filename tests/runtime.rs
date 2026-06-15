@@ -1,84 +1,76 @@
 #![cfg(feature = "runtime")]
+
 use eerie::runtime::{
     self,
-    hal::BufferView,
-    vm::{List, ToRef, ToValue, Value},
+    error::RuntimeError,
+    hal::{Buffer, BufferMapping, BufferParams, BufferView, ElementType, Encoding, Tensor},
+    vm::{FunctionLinkage, List, ToRef, ToValue, Undefined, Value},
 };
 use half::f16;
-use log::{debug, info};
+use log::info;
 use test_log::test;
 
-#[test]
-fn test_instance() {
-    let mut driver_registry = runtime::hal::DriverRegistry::new();
-    debug!("DriverRegistry created");
-    let options =
-        runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-    debug!("InstanceOptions created");
-    runtime::api::Instance::new(&options).unwrap();
+fn local_sync_device() -> (
+    runtime::hal::DriverRegistry,
+    runtime::hal::Driver,
+    runtime::hal::Device,
+) {
+    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver("local-sync").unwrap();
+    let device = driver.create_default_device().unwrap();
+    (registry, driver, device)
 }
 
 #[test]
-fn test_session() {
-    let mut driver_registry = runtime::hal::DriverRegistry::new();
-    debug!("DriverRegistry created");
-    let options =
-        runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-    debug!("InstanceOptions created");
-    let instance = runtime::api::Instance::new(&options).unwrap();
-    debug!("Instance created");
-    let device = instance
-        .try_create_default_device("local-sync")
-        .expect("Failed to create device");
-    debug!("Device created");
-    let session = runtime::api::Session::create_with_device(
-        &instance,
-        &runtime::api::SessionOptions::default(),
-        &device,
-    )
-    .expect("Failed to create session");
-    session.trim().expect("Failed to trim session");
+fn test_instance() {
+    runtime::vm::Instance::new().unwrap();
+}
+
+#[test]
+fn test_context_with_hal_module() {
+    let instance = runtime::vm::Instance::new().unwrap();
+    let (_registry, _driver, device) = local_sync_device();
+    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
+    runtime::vm::Context::with_modules(&instance, &[&hal_module]).unwrap();
+}
+
+#[test]
+fn device_metadata() {
+    let (_registry, driver, device) = local_sync_device();
+    let devices = driver.available_devices().unwrap();
+    assert!(!devices.is_empty());
+    assert_eq!(devices[0].ordinal, 0);
+    assert!(!devices[0].name.is_empty() || !devices[0].path.is_empty());
+    assert!(!device.id().is_empty());
+    device.capabilities().unwrap();
+    assert!(device
+        .query_i64("eerie.missing.query.category", "missing-key")
+        .is_err());
+    device.trim().unwrap();
 }
 
 #[test]
 fn dynamic_list() {
-    let instance = runtime::api::Instance::new(
-        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
-            .use_all_available_drivers(),
-    )
-    .unwrap();
-    let list = runtime::vm::DynamicList::<Value<i32>>::new(4, &instance).unwrap();
+    let instance = runtime::vm::Instance::new().unwrap();
+    let mut list = List::<Value<i32>>::new(4, &instance).unwrap();
     list.push_value(1.to_value()).unwrap();
     list.push_value(2.to_value()).unwrap();
     list.push_value(3.to_value()).unwrap();
     list.push_value(4.to_value()).unwrap();
     let val = list.get_value::<i32>(0).unwrap();
     drop(list);
-    assert_eq!(val.from_value(), 1);
+    assert_eq!(val.get(), 1);
 }
 
 #[test]
 fn ref_list() {
-    let instance = runtime::api::Instance::new(
-        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
-            .use_all_available_drivers(),
-    )
-    .unwrap();
-    let device = instance
-        .try_create_default_device("local-sync")
-        .expect("Failed to create device");
-    let session = runtime::api::Session::create_with_device(
-        &instance,
-        &runtime::api::SessionOptions::default(),
+    let instance = runtime::vm::Instance::new().unwrap();
+    let (_registry, _driver, device) = local_sync_device();
+    let mut list = List::<Undefined>::new(4, &instance).unwrap();
+    let buffer = BufferView::<f32>::from_host(
         &device,
-    )
-    .unwrap();
-    let list =
-        runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(4, &instance).unwrap();
-    let buffer = BufferView::<f32>::new(
-        &session,
         &[2, 2],
-        runtime::hal::EncodingType::DenseRowMajor,
+        Encoding::DenseRowMajor,
         &[1.0, 2.0, 3.0, 4.0],
     )
     .unwrap();
@@ -86,33 +78,21 @@ fn ref_list() {
     let buffer_ref = buffer.to_ref(&instance).unwrap();
     list.push_ref(&buffer_ref).unwrap();
     list.push_ref(&buffer_ref).unwrap();
-    let buffer_ref_2: runtime::vm::Ref<BufferView<f32>> = list.get_ref(0).unwrap();
-    info!("buffer_ref_2: {:?}", buffer_ref_2.to_buffer_view(&session));
+    let buffer_ref_2 = list.get_ref::<BufferView<f32>>(0).unwrap();
+    let buffer_2 = buffer_ref_2.to_buffer_view().unwrap();
+    info!("buffer_ref_2: {:?}", buffer_2);
 
-    let mapping = runtime::hal::BufferMapping::new(buffer_ref_2.to_buffer_view(&session)).unwrap();
+    let mapping = BufferMapping::map_read(&buffer_2).unwrap();
     info!("mapping: {:?}", mapping.data());
 }
 
 #[test]
 fn fp16_buffer() {
-    let instance = runtime::api::Instance::new(
-        &runtime::api::InstanceOptions::new(&mut runtime::hal::DriverRegistry::new())
-            .use_all_available_drivers(),
-    )
-    .unwrap();
-    let device = instance
-        .try_create_default_device("local-sync")
-        .expect("Failed to create device");
-    let session = runtime::api::Session::create_with_device(
-        &instance,
-        &runtime::api::SessionOptions::default(),
+    let (_registry, _driver, device) = local_sync_device();
+    let buffer = BufferView::<f16>::from_host(
         &device,
-    )
-    .unwrap();
-    let buffer = BufferView::<f16>::new(
-        &session,
         &[2, 2],
-        runtime::hal::EncodingType::DenseRowMajor,
+        Encoding::DenseRowMajor,
         &[
             f16::from_f32(1.0),
             f16::from_f32(2.0),
@@ -122,7 +102,7 @@ fn fp16_buffer() {
     )
     .unwrap();
 
-    let mapping = runtime::hal::BufferMapping::new(buffer).unwrap();
+    let mapping = BufferMapping::map_read(&buffer).unwrap();
     assert_eq!(
         mapping.data(),
         &[
@@ -134,15 +114,205 @@ fn fp16_buffer() {
     );
 }
 
+#[test]
+fn buffer_metadata() {
+    let (_registry, _driver, device) = local_sync_device();
+    let buffer = BufferView::<f32>::from_host(
+        &device,
+        &[2, 2],
+        Encoding::DenseRowMajor,
+        &[1.0, 2.0, 3.0, 4.0],
+    )
+    .unwrap();
+
+    assert_eq!(buffer.rank(), 2);
+    assert_eq!(buffer.shape(), vec![2, 2]);
+    assert_eq!(buffer.dim(0), 2);
+    assert_eq!(buffer.dim(1), 2);
+    assert_eq!(buffer.element_count(), 4);
+    assert_eq!(buffer.element_size(), core::mem::size_of::<f32>());
+    assert_eq!(buffer.element_type(), ElementType::Float32);
+    assert_eq!(buffer.encoding(), Encoding::DenseRowMajor);
+}
+
+#[test]
+fn raw_buffer_allocation_and_view() {
+    let (_registry, _driver, device) = local_sync_device();
+    let buffer = Buffer::allocate(
+        &device,
+        4 * core::mem::size_of::<f32>(),
+        BufferParams::default(),
+    )
+    .unwrap();
+    assert_eq!(buffer.byte_offset(), 0);
+    assert_eq!(buffer.byte_length(), 4 * core::mem::size_of::<f32>());
+    assert!(buffer.allocation_size() >= buffer.byte_length());
+    assert_ne!(buffer.memory_type(), 0);
+    assert_ne!(buffer.allowed_access(), 0);
+    assert_ne!(buffer.allowed_usage(), 0);
+
+    let view = BufferView::<f32>::from_buffer(&buffer, &[4], Encoding::DenseRowMajor).unwrap();
+    let raw_buffer = view.raw_buffer();
+    assert_eq!(raw_buffer.byte_length(), buffer.byte_length());
+    assert_eq!(raw_buffer.memory_type(), buffer.memory_type());
+    assert_eq!(raw_buffer.allowed_access(), buffer.allowed_access());
+    assert_eq!(raw_buffer.allowed_usage(), buffer.allowed_usage());
+
+    view.write_from_slice(&device, &[1.0, 2.0, 3.0, 4.0])
+        .unwrap();
+    assert_eq!(view.read_to_vec(&device).unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
+
+    let subspan = buffer.subspan(0, 2 * core::mem::size_of::<f32>()).unwrap();
+    assert_eq!(subspan.byte_length(), 2 * core::mem::size_of::<f32>());
+}
+
+#[test]
+fn buffer_shape_mismatch_is_rejected() {
+    let (_registry, _driver, device) = local_sync_device();
+    let err = BufferView::<f32>::from_host(
+        &device,
+        &[2, 3],
+        Encoding::DenseRowMajor,
+        &[1.0, 2.0, 3.0, 4.0],
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, RuntimeError::InvalidArgument(_)));
+}
+
+#[test]
+fn tensor_read_write_and_copy() {
+    let (_registry, _driver, device) = local_sync_device();
+    let tensor = Tensor::<f32>::from_slice(&device, &[2, 2], &[1.0, 2.0, 3.0, 4.0]).unwrap();
+    assert_eq!(tensor.shape(), vec![2, 2]);
+    assert_eq!(
+        tensor.read_to_vec(&device).unwrap(),
+        vec![1.0, 2.0, 3.0, 4.0]
+    );
+
+    tensor
+        .write_from_slice(&device, &[5.0, 6.0, 7.0, 8.0])
+        .unwrap();
+    assert_eq!(
+        tensor.read_to_vec(&device).unwrap(),
+        vec![5.0, 6.0, 7.0, 8.0]
+    );
+
+    let target = Tensor::<f32>::from_slice(&device, &[2, 2], &[0.0, 0.0, 0.0, 0.0]).unwrap();
+    tensor
+        .as_buffer_view()
+        .copy_to(&device, target.as_buffer_view())
+        .unwrap();
+    assert_eq!(
+        target.read_to_vec(&device).unwrap(),
+        vec![5.0, 6.0, 7.0, 8.0]
+    );
+}
+
+#[test]
+fn append_module_from_vmvx_fixture() {
+    let vmfb = include_bytes!("mul_vmvx.vmfb");
+    let output = run_mul(vmfb, "local-sync");
+    assert_eq!(output[0], 0.0);
+    assert_eq!(output[7], 49.0);
+    assert_eq!(output[99], 9801.0);
+}
+
+#[test]
+fn function_metadata_and_tensor_invoke() {
+    let vmfb = include_bytes!("mul_vmvx.vmfb");
+    let instance = runtime::vm::Instance::new().unwrap();
+    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver("local-sync").unwrap();
+    let device = driver.create_default_device().unwrap();
+    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
+    let bytecode_module = runtime::vm::Module::bytecode(&instance, vmfb).unwrap();
+    let context =
+        runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
+    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
+
+    assert_eq!(bytecode_module.name(), "arithmetic");
+    let module_signature = bytecode_module.signature();
+    assert!(module_signature.export_function_count >= 1);
+    assert!(bytecode_module.lookup_attr("missing.module.attr").is_none());
+    assert!(bytecode_module
+        .attr(module_signature.attr_count)
+        .unwrap()
+        .is_none());
+    let function_ref = bytecode_module
+        .lookup_export_function("simple_mul")
+        .unwrap();
+    assert_eq!(function_ref.name(), "simple_mul");
+    assert_eq!(function_ref.signature().argument_count, 2);
+    assert!(function_ref.lookup_attr("missing.function.attr").is_none());
+
+    let function_ref = bytecode_module
+        .lookup_function("simple_mul", FunctionLinkage::Export)
+        .unwrap();
+    assert_eq!(function_ref.name(), "simple_mul");
+
+    assert_eq!(function.name(), "simple_mul");
+    let signature = function.signature();
+    assert_eq!(signature.argument_count, 2);
+    assert_eq!(signature.result_count, 1);
+    assert!(function.lookup_attr("missing.function.attr").is_none());
+
+    let input_data = Vec::from_iter((0..100).map(|i| i as f32));
+    let input = Tensor::<f32>::from_slice(&device, &[100], input_data.as_slice()).unwrap();
+    let outputs = function.invoke_tensors(&[&input, &input], 1).unwrap();
+    let output = outputs[0].read_to_vec(&device).unwrap();
+    assert_eq!(output[0], 0.0);
+    assert_eq!(output[7], 49.0);
+    assert_eq!(output[99], 9801.0);
+}
+
+fn run_mul(vmfb: &[u8], driver_name: &str) -> Vec<f32> {
+    let instance = runtime::vm::Instance::new().unwrap();
+    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver(driver_name).unwrap();
+    let device = driver.create_default_device().unwrap();
+    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
+    let bytecode_module = runtime::vm::Module::bytecode(&instance, vmfb).unwrap();
+    let context =
+        runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
+    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
+
+    let input_data = Vec::from_iter((0..100).map(|i| i as f32));
+    let input = BufferView::<f32>::from_host(
+        &device,
+        &[100],
+        Encoding::DenseRowMajor,
+        input_data.as_slice(),
+    )
+    .unwrap();
+
+    let mut input_list = List::<Undefined>::new(2, &instance).unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    let mut output_list = List::<Undefined>::new(1, &instance).unwrap();
+
+    function.invoke(&input_list, &mut output_list).unwrap();
+
+    let output_ref = output_list.get_ref::<BufferView<f32>>(0).unwrap();
+    output_ref
+        .to_buffer_view()
+        .unwrap()
+        .read_to_vec(&device)
+        .unwrap()
+}
+
 #[cfg(feature = "compiler")]
 mod integration_tests {
     use eerie::compiler;
-    use eerie::runtime;
-    use eerie::runtime::hal::{BufferMapping, BufferView, EncodingType};
-    use eerie::runtime::vm::{List, ToRef};
-    use log::{debug, info};
+    use log::info;
     use std::path::Path;
     use std::sync::Mutex;
+
+    use super::run_mul;
 
     static COMPILER: Mutex<Option<compiler::Compiler>> = Mutex::new(None);
 
@@ -154,14 +324,15 @@ mod integration_tests {
         }
     }
 
-    #[test]
-    fn append_module() {
+    fn compile_mul(target_backend: &str) -> Vec<u8> {
         init_compiler();
         let compiler = COMPILER.lock().unwrap();
         let mut compiler_session = compiler.as_ref().unwrap().create_session();
-        compiler_session
-            .set_flags(vec!["--iree-hal-target-backends=llvm-cpu".to_string()])
-            .unwrap();
+        let mut flags = vec![format!("--iree-hal-target-backends={target_backend}")];
+        if target_backend == "metal-spirv" {
+            flags.push("--iree-metal-compile-to-metallib=false".to_string());
+        }
+        compiler_session.set_flags(flags).unwrap();
         let source = compiler_session
             .create_source_from_file(Path::new("tests/mul.mlir"))
             .unwrap();
@@ -177,73 +348,29 @@ mod integration_tests {
             .unwrap()
             .output_vm_byte_code(&mut output)
             .unwrap();
-        let vmfb = output.map_memory().unwrap();
+        output.map_memory().unwrap().to_vec()
+    }
 
-        let mut driver_registry = runtime::hal::DriverRegistry::new();
-        let options =
-            runtime::api::InstanceOptions::new(&mut driver_registry).use_all_available_drivers();
-        let instance = runtime::api::Instance::new(&options).unwrap();
-        let device = instance
-            .try_create_default_device("local-sync")
-            .expect("Failed to create device");
-        let session = runtime::api::Session::create_with_device(
-            &instance,
-            &runtime::api::SessionOptions::default(),
-            &device,
-        )
-        .unwrap();
-
-        unsafe { session.append_module_from_memory(vmfb) }.unwrap();
-
-        let func = session.lookup_function("arithmetic.simple_mul").unwrap();
-        debug!("Function found!");
-
-        let mut call = runtime::api::Call::new(&session, &func).unwrap();
-        let vec = Vec::from_iter((0..100).map(|i| i as f32));
-
-        let input = BufferView::<f32>::new(
-            &session,
-            &[100],
-            EncodingType::DenseRowMajor,
-            vec.as_slice(),
-        )
-        .unwrap();
-
-        info!("Input: {:?}", input);
-
-        call.inputs_push_back_buffer_view(&input).unwrap();
-        call.inputs_push_back_buffer_view(&input).unwrap();
-
-        call.invoke().unwrap();
-
-        let output = call.outputs_pop_front_buffer_view::<f32>().unwrap();
-
+    #[test]
+    fn append_module() {
+        let vmfb = compile_mul("llvm-cpu");
+        let output = run_mul(&vmfb, "local-sync");
         info!("Output: {:?}", output);
+        assert_eq!(output[0], 0.0);
+        assert_eq!(output[7], 49.0);
+        assert_eq!(output[99], 9801.0);
+    }
 
-        let input = BufferView::<f32>::new(
-            &session,
-            &[100],
-            EncodingType::DenseRowMajor,
-            vec.as_slice(),
-        )
-        .unwrap();
-        let input_list =
-            runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(1, &instance)
-                .unwrap();
-        input_list
-            .push_ref(&input.to_ref(&instance).unwrap())
-            .unwrap();
-        input_list
-            .push_ref(&input.to_ref(&instance).unwrap())
-            .unwrap();
-        let output_list =
-            runtime::vm::DynamicList::<runtime::vm::Ref<BufferView<f32>>>::new(0, &instance)
-                .unwrap();
-        let function = session.lookup_function("arithmetic.simple_mul").unwrap();
-        function.invoke(&input_list, &output_list).unwrap();
-        let output = output_list.get_ref(0).unwrap();
-        let output_mapping: BufferMapping<f32> =
-            runtime::hal::BufferMapping::new(output.to_buffer_view(&session)).unwrap();
-        info!("Output: {:?}", output_mapping.data());
+    #[test]
+    fn metal_smoke() {
+        if std::env::var("EERIE_TEST_METAL").as_deref() != Ok("1") {
+            return;
+        }
+
+        let vmfb = compile_mul("metal-spirv");
+        let output = run_mul(&vmfb, "metal");
+        assert_eq!(output[0], 0.0);
+        assert_eq!(output[7], 49.0);
+        assert_eq!(output[99], 9801.0);
     }
 }

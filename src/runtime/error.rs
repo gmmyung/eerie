@@ -1,36 +1,35 @@
-#[cfg(feature = "std")]
-use thiserror::Error;
 extern crate alloc;
 use super::base;
+use alloc::string::String;
 
-#[cfg(feature = "std")]
-#[derive(Error, Debug)]
-pub enum RuntimeError {
-    #[error("IREE runtime error: {0}")]
-    StatusError(#[from] base::StatusError),
-    #[error("IREE runtime error: {0}")]
-    InstanceMismatch(String),
-}
-
-#[cfg(not(feature = "std"))]
+#[derive(Debug)]
 pub enum RuntimeError {
     StatusError(base::StatusError),
-    InstanceMismatch(alloc::string::String),
+    InstanceMismatch(String),
+    InvalidArgument(String),
 }
 
-#[cfg(not(feature = "std"))]
 impl From<base::StatusError> for RuntimeError {
     fn from(err: base::StatusError) -> Self {
         RuntimeError::StatusError(err)
     }
 }
 
-#[cfg(not(feature = "std"))]
-impl core::fmt::Debug for RuntimeError {
+impl core::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            RuntimeError::StatusError(err) => write!(f, "IREE runtime error: {:?}", err),
+            RuntimeError::StatusError(err) => write!(f, "IREE runtime error: {}", err),
             RuntimeError::InstanceMismatch(msg) => write!(f, "IREE runtime error: {}", msg),
+            RuntimeError::InvalidArgument(msg) => write!(f, "IREE runtime error: {}", msg),
+        }
+    }
+}
+
+impl core::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            RuntimeError::StatusError(err) => Some(err),
+            RuntimeError::InstanceMismatch(_) | RuntimeError::InvalidArgument(_) => None,
         }
     }
 }

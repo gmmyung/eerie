@@ -47,6 +47,18 @@ mod test {
     }
 
     #[test]
+    fn get_process_cl_args() {
+        init_compiler();
+        let args = COMPILER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .get_process_cl_args();
+        info!("Process CL args: {:?}", args);
+    }
+
+    #[test]
     fn setup_global_cl() {
         init_compiler();
         COMPILER
@@ -108,6 +120,21 @@ mod test {
             .unwrap()
             .create_session()
             .create_invocation();
+    }
+
+    #[test]
+    fn invocation_debug_outputs() {
+        init_compiler();
+        let compiler = COMPILER.lock().unwrap();
+        let session = compiler.as_ref().unwrap().create_session();
+        let mut invocation = session.create_invocation();
+        invocation
+            .set_dump_compilation_phases_to(Path::new("/tmp/eerie-dump-phases"))
+            .unwrap()
+            .setup_remarks(".*", Path::new("/tmp/eerie-remarks.yaml"))
+            .unwrap()
+            .set_crash_reproducer(Path::new("/tmp/eerie-crash-reproducer.mlir"))
+            .unwrap();
     }
 
     #[test]
@@ -182,5 +209,14 @@ mod test {
                 .to_str()
                 .unwrap()
         });
+    }
+
+    #[test]
+    fn output_write() {
+        init_compiler();
+        let compiler = COMPILER.lock().unwrap();
+        let mut output = MemBufferOutput::new(compiler.as_ref().unwrap()).unwrap();
+        output.write(b"abc").unwrap();
+        assert_eq!(output.map_memory().unwrap(), b"abc");
     }
 }

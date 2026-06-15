@@ -1,5 +1,5 @@
 use eerie_sys::compiler as sys;
-use log::{debug, error};
+use log::debug;
 use std::{
     ffi::{CStr, CString},
     fmt::{Debug, Display, Formatter},
@@ -19,10 +19,35 @@ pub struct Error {
 impl Error {
     fn from_ptr(ptr: *mut sys::iree_compiler_error_t) -> Self {
         let c_str = unsafe { std::ffi::CStr::from_ptr(sys::ireeCompilerErrorGetMessage(ptr)) };
-        let message = c_str.to_str().expect("Invalid UTF-8 string").to_string();
+        let message = c_str.to_string_lossy().into_owned();
         unsafe { sys::ireeCompilerErrorDestroy(ptr) }
         Self { message }
     }
+}
+
+struct StringCapture {
+    values: Vec<String>,
+}
+
+impl StringCapture {
+    fn push_cstr(&mut self, value: *const std::os::raw::c_char) {
+        if value.is_null() {
+            return;
+        }
+        let value = unsafe { CStr::from_ptr(value) }
+            .to_string_lossy()
+            .into_owned();
+        debug!("Captured string: {}", value);
+        self.values.push(value);
+    }
+}
+
+struct SourceCapture {
+    values: Vec<*mut sys::iree_compiler_source_t>,
+}
+
+fn path_to_cstring(path: &Path) -> Result<CString, CompilerError> {
+    CString::new(path.to_string_lossy().as_bytes()).map_err(Into::into)
 }
 
 impl std::fmt::Display for Error {
@@ -80,9 +105,34 @@ impl Compiler {
     /// empty string. The returned is valid for as long as the compiler is
     /// initialized.
     pub fn get_revision(&self) -> Result<String, CompilerError> {
-        let rev_str =
-            unsafe { std::ffi::CStr::from_ptr(sys::ireeCompilerGetRevision()) }.to_str()?;
-        Ok(rev_str.to_string())
+        let rev_str = unsafe { std::ffi::CStr::from_ptr(sys::ireeCompilerGetRevision()) };
+        Ok(rev_str.to_string_lossy().into_owned())
+    }
+
+    /// Returns process command-line arguments as normalized by the compiler API.
+    pub fn get_process_cl_args(&self) -> Vec<String> {
+        let mut argc = 0;
+        let mut argv = core::ptr::null_mut();
+        unsafe {
+            sys::ireeCompilerGetProcessCLArgs(&mut argc, &mut argv);
+        }
+        if argv.is_null() || argc <= 0 {
+            return Vec::new();
+        }
+        unsafe { core::slice::from_raw_parts(argv, argc as usize) }
+            .iter()
+            .filter_map(|arg| {
+                if arg.is_null() {
+                    None
+                } else {
+                    Some(
+                        unsafe { CStr::from_ptr(*arg) }
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                }
+            })
+            .collect()
     }
 
     /// Initializes the command line environment from an explicit argc/argv
@@ -118,64 +168,56 @@ impl Compiler {
         backend: *const std::os::raw::c_char,
         user_data: *mut std::ffi::c_void,
     ) {
-        debug!("Capturing registered HAL target backend");
-        let hal_target_backend_list = unsafe {
-            let ptr = user_data as *mut Mutex<Vec<String>>;
-            &mut *ptr
-        }
-        .get_mut()
-        .unwrap();
-        let backend_name = unsafe { std::ffi::CStr::from_ptr(backend) };
-        hal_target_backend_list.push(backend_name.to_str().unwrap().to_string());
-        debug!("Backend name: {}", backend_name.to_str().unwrap());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            debug!("Capturing registered HAL target backend");
+            if user_data.is_null() {
+                return;
+            }
+            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(backend);
+        }));
     }
 
     /// Enumerates the registered HAL target backends.
     pub fn get_registered_hal_target_backends(&self) -> Vec<String> {
-        let mut registered_hal_target_backends = Mutex::new(Vec::new());
+        let mut registered_hal_target_backends = StringCapture { values: Vec::new() };
         debug!("Enumerating registered HAL target backends");
         unsafe {
             sys::ireeCompilerEnumerateRegisteredHALTargetBackends(
                 Some(Self::capture_registered_hal_target_backend_callback),
-                &mut registered_hal_target_backends as *mut Mutex<Vec<String>> as *mut _,
+                &mut registered_hal_target_backends as *mut StringCapture as *mut _,
             );
         }
-        let registered_hal_target_backends = registered_hal_target_backends.lock().unwrap();
-        registered_hal_target_backends.clone()
+        registered_hal_target_backends.values
     }
 
     extern "C" fn capture_plugin_callback(
         backend: *const std::os::raw::c_char,
         user_data: *mut std::ffi::c_void,
     ) {
-        debug!("Capturing registered HAL target backend");
-        let hal_target_backend_list = unsafe {
-            let ptr = user_data as *mut Mutex<Vec<String>>;
-            &mut *ptr
-        }
-        .get_mut()
-        .unwrap();
-        let backend_name = unsafe { std::ffi::CStr::from_ptr(backend) };
-        hal_target_backend_list.push(backend_name.to_str().unwrap().to_string());
-        debug!("Backend name: {}", backend_name.to_str().unwrap());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            debug!("Capturing registered plugin");
+            if user_data.is_null() {
+                return;
+            }
+            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(backend);
+        }));
     }
 
     /// Enumerates the registered plugins.
     pub fn get_plugins(&self) -> Vec<String> {
-        let mut plugins = Mutex::new(Vec::new());
+        let mut plugins = StringCapture { values: Vec::new() };
         debug!("Enumerating plugins");
         unsafe {
             sys::ireeCompilerEnumeratePlugins(
                 Some(Self::capture_plugin_callback),
-                &mut plugins as *mut Mutex<Vec<String>> as *mut _,
+                &mut plugins as *mut StringCapture as *mut _,
             );
         }
-        let plugins = plugins.lock().unwrap();
-        plugins.clone()
+        plugins.values
     }
 
     /// Creates a new session.
-    pub fn create_session(&self) -> Session {
+    pub fn create_session(&self) -> Session<'_> {
         Session::new(self)
     }
 }
@@ -241,37 +283,33 @@ impl<'a> Session<'a> {
         _length: usize,
         user_data: *mut std::ffi::c_void,
     ) {
-        debug!("Capturing session flags");
-        let flags = unsafe {
-            let ptr = user_data as *mut Mutex<Vec<String>>;
-            &mut *ptr
-        }
-        .get_mut()
-        .unwrap();
-        let flag = unsafe { std::ffi::CStr::from_ptr(flag) };
-        flags.push(flag.to_str().unwrap().to_string());
-        debug!("Flag: {}", flag.to_str().unwrap());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            debug!("Capturing session flags");
+            if user_data.is_null() {
+                return;
+            }
+            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(flag);
+        }));
     }
 
     /// Gets textual flags actually in effect from any source. Optionally, only
     /// calls back for non-default valued flags.
     pub fn get_flags(&self, non_default_only: bool) -> Vec<String> {
-        let mut flags = Mutex::new(Vec::new());
+        let mut flags = StringCapture { values: Vec::new() };
         debug!("Getting session flags");
         unsafe {
             sys::ireeCompilerSessionGetFlags(
                 self.ctx,
                 non_default_only,
                 Some(Self::capture_flags_callback),
-                &mut flags as *mut Mutex<Vec<String>> as *mut _,
+                &mut flags as *mut StringCapture as *mut _,
             );
         }
-        let flags = flags.lock().unwrap();
-        flags.clone()
+        flags.values
     }
 
     /// Creates a new invocation.
-    pub fn create_invocation(&self) -> Invocation {
+    pub fn create_invocation(&self) -> Invocation<'_> {
         Invocation::new(self)
     }
 
@@ -279,7 +317,7 @@ impl<'a> Session<'a> {
     pub fn create_source_from_file(
         &'a self,
         file_name: &Path,
-    ) -> Result<Source<'a, '_>, CompilerError> {
+    ) -> Result<Source<'a, 'a>, CompilerError> {
         Source::from_file(self, file_name)
     }
 
@@ -315,6 +353,10 @@ pub struct Invocation<'a> {
     ctx: *mut sys::iree_compiler_invocation_t,
     diagnostic_queue: Pin<Box<Diagnostics>>,
     session: &'a Session<'a>,
+    dump_compilation_phases_to: Option<CString>,
+    remarks_filter: Option<CString>,
+    remarks_output_file: Option<CString>,
+    crash_reproducer_path: Option<CString>,
 }
 
 /// IREE Compiler diagnostics.
@@ -381,7 +423,9 @@ impl Diagnostics {
     }
 
     fn push(&self, diagnostic: Diagnostic) {
-        self.data.lock().unwrap().push(diagnostic);
+        if let Ok(mut data) = self.data.lock() {
+            data.push(diagnostic);
+        }
     }
 }
 
@@ -440,6 +484,10 @@ impl<'a> Invocation<'a> {
             ctx,
             diagnostic_queue,
             session,
+            dump_compilation_phases_to: None,
+            remarks_filter: None,
+            remarks_output_file: None,
+            crash_reproducer_path: None,
         }
     }
 
@@ -449,32 +497,32 @@ impl<'a> Invocation<'a> {
         _length: usize,
         user_data: *mut std::ffi::c_void,
     ) {
-        debug!("Capturing callback diagnostics");
-        let message = unsafe { std::ffi::CStr::from_ptr(message) };
-        let diagnostic = match severity {
-            sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_NOTE => {
-                Diagnostic::Note(message.to_str().unwrap().to_string())
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            debug!("Capturing callback diagnostics");
+            if message.is_null() || user_data.is_null() {
+                return;
             }
-            sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_WARNING => {
-                Diagnostic::Warning(message.to_str().unwrap().to_string())
-            }
-            sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_ERROR => {
-                Diagnostic::Error(message.to_str().unwrap().to_string())
-            }
-            sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_REMARK => {
-                Diagnostic::Remark(message.to_str().unwrap().to_string())
-            }
-            _ => {
-                panic!("Unknown diagnostic severity");
-            }
-        };
-        debug!("Diagnostic: {:?}", diagnostic);
-        unsafe {
-            let diagnostic_queue = &*(user_data as *const Diagnostics);
-            debug!("Before push");
-            debug!("Diagnostics queue: {:?}", diagnostic_queue);
-            diagnostic_queue.push(diagnostic);
-        }
+            let message = unsafe { CStr::from_ptr(message) }
+                .to_string_lossy()
+                .into_owned();
+            let diagnostic = match severity {
+                sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_NOTE => {
+                    Diagnostic::Note(message)
+                }
+                sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_WARNING => {
+                    Diagnostic::Warning(message)
+                }
+                sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_ERROR => {
+                    Diagnostic::Error(message)
+                }
+                sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_REMARK => {
+                    Diagnostic::Remark(message)
+                }
+                _ => Diagnostic::Error(message),
+            };
+            debug!("Diagnostic: {:?}", diagnostic);
+            unsafe { &*(user_data as *const Diagnostics) }.push(diagnostic);
+        }));
     }
 
     /// Enables default, pretty-printed diagnostics to the console. This is usually
@@ -486,6 +534,81 @@ impl<'a> Invocation<'a> {
             sys::ireeCompilerInvocationEnableConsoleDiagnostics(self.ctx);
         }
         self
+    }
+
+    unsafe extern "C" fn crash_reproducer_callback(
+        out_output: *mut *mut sys::iree_compiler_output_t,
+        user_data: *mut std::ffi::c_void,
+    ) -> *mut sys::iree_compiler_error_t {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if out_output.is_null() || user_data.is_null() {
+                return core::ptr::null_mut();
+            }
+            let path = unsafe { &*(user_data as *const CString) };
+            unsafe { sys::ireeCompilerOutputOpenFile(path.as_ptr(), out_output) }
+        }));
+        result.unwrap_or(core::ptr::null_mut())
+    }
+
+    /// Writes a local crash reproducer to `path` if the compiler crashes.
+    pub fn set_crash_reproducer(&mut self, path: &Path) -> Result<&mut Self, CompilerError> {
+        self.crash_reproducer_path = Some(path_to_cstring(path)?);
+        let user_data = self
+            .crash_reproducer_path
+            .as_ref()
+            .expect("crash reproducer path was just set") as *const CString
+            as *mut _;
+        unsafe {
+            sys::ireeCompilerInvocationSetCrashHandler(
+                self.ctx,
+                true,
+                Some(Self::crash_reproducer_callback),
+                user_data,
+            );
+        }
+        Ok(self)
+    }
+
+    /// Dumps IR snapshots for compilation phases into `path`.
+    pub fn set_dump_compilation_phases_to(
+        &mut self,
+        path: &Path,
+    ) -> Result<&mut Self, CompilerError> {
+        self.dump_compilation_phases_to = Some(path_to_cstring(path)?);
+        unsafe {
+            sys::ireeCompilerInvocationSetDumpCompilationPhasesTo(
+                self.ctx,
+                self.dump_compilation_phases_to
+                    .as_ref()
+                    .expect("dump path was just set")
+                    .as_ptr(),
+            );
+        }
+        Ok(self)
+    }
+
+    /// Configures YAML remark output.
+    pub fn setup_remarks(
+        &mut self,
+        filter: &str,
+        output_file: &Path,
+    ) -> Result<&mut Self, CompilerError> {
+        self.remarks_filter = Some(CString::new(filter)?);
+        self.remarks_output_file = Some(path_to_cstring(output_file)?);
+        unsafe {
+            sys::ireeCompilerInvocationSetupRemarks(
+                self.ctx,
+                self.remarks_filter
+                    .as_ref()
+                    .expect("remarks filter was just set")
+                    .as_ptr(),
+                self.remarks_output_file
+                    .as_ref()
+                    .expect("remarks output was just set")
+                    .as_ptr(),
+            );
+        }
+        Ok(self)
     }
 
     /// Parses a source into this instance in preparation for performing a
@@ -687,13 +810,13 @@ impl<'a, 'b> Source<'a, 'b> {
             Ok(true) => {}
             Ok(false) => {
                 return Err(CompilerError::FileNotFound(
-                    file.to_path_buf().to_str().unwrap().into(),
+                    file.to_string_lossy().into_owned(),
                 ))
             }
             Err(e) => return Err(e.into()),
         }
 
-        let file = CString::new(file.to_str().unwrap())?;
+        let file = path_to_cstring(file)?;
         let mut source_ptr = std::ptr::null_mut();
         let err_ptr = unsafe {
             debug!("Opening file");
@@ -764,13 +887,15 @@ impl<'a, 'b> Source<'a, 'b> {
         source: *mut sys::iree_compiler_source_t,
         user_data: *mut std::ffi::c_void,
     ) {
-        debug!("Splitting source callback");
-        let sources =
-            unsafe { &mut *(user_data as *mut Mutex<Vec<*mut sys::iree_compiler_source_t>>) }
-                .get_mut()
-                .unwrap();
-
-        sources.push(source);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            debug!("Splitting source callback");
+            if user_data.is_null() || source.is_null() {
+                return;
+            }
+            unsafe { &mut *(user_data as *mut SourceCapture) }
+                .values
+                .push(source);
+        }));
     }
 
     /// Splits the current source buffer, invoking a callback for each "split"
@@ -778,19 +903,17 @@ impl<'a, 'b> Source<'a, 'b> {
     /// splitAndProcessBuffer): which split on `// -----`.
     pub fn split(&self) -> Result<Vec<Self>, CompilerError> {
         debug!("Splitting source");
-        let mut sources = Mutex::new(Vec::new());
+        let mut sources = SourceCapture { values: Vec::new() };
         let err_ptr = unsafe {
             sys::ireeCompilerSourceSplit(
                 self.ctx,
                 Some(Self::split_callback),
-                &mut sources as *mut Mutex<Vec<*mut sys::iree_compiler_source_t>>
-                    as *mut std::ffi::c_void,
+                &mut sources as *mut SourceCapture as *mut std::ffi::c_void,
             )
         };
         if err_ptr.is_null() {
             Ok(sources
-                .into_inner()
-                .unwrap()
+                .values
                 .into_iter()
                 .map(|ctx| Source {
                     ctx,
@@ -819,6 +942,24 @@ impl Drop for Source<'_, '_> {
 /// Outputs that can be written by the invocation
 pub trait Output {
     fn as_ptr(&self) -> *mut sys::iree_compiler_output_t;
+
+    fn write(&mut self, data: &[u8]) -> Result<(), CompilerError> {
+        let err_ptr = unsafe {
+            sys::ireeCompilerOutputWrite(
+                self.as_ptr(),
+                data.as_ptr() as *const std::ffi::c_void,
+                data.len(),
+            )
+        };
+        if err_ptr.is_null() {
+            Ok(())
+        } else {
+            Err(CompilerError::IREECompilerError(
+                Error::from_ptr(err_ptr),
+                Diagnostics::default(),
+            ))
+        }
+    }
 }
 
 /// Output that writes by file name
@@ -846,7 +987,7 @@ impl<'a> FileNameOutput<'a> {
     /// Creates a new filename output
     pub fn new(compiler: &'a Compiler, path: &Path) -> Result<Self, CompilerError> {
         debug!("Creating filename output");
-        let path = CString::new(path.to_str().unwrap())?;
+        let path = path_to_cstring(path)?;
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { sys::ireeCompilerOutputOpenFile(path.as_ptr(), &mut output_ptr) };
         if err_ptr.is_null() {

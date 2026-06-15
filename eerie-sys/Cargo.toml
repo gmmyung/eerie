@@ -1,6 +1,6 @@
 [package]
 name = "eerie-sys"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2021"
 authors = ["Gyungmin Myung"]
 license = "Apache-2.0"
@@ -40,14 +40,16 @@ exclude = [
 ]
 
 [build-dependencies]
-bindgen = "0.69.4"
-cmake = "0.1.50"
-cc = "1.0.90"
+bindgen = "0.72"
+cmake = "0.1"
+cc = "1.2"
+
+[dependencies]
+critical-section = { version = "1.2", optional = true }
 
 [features]
 default = ["compiler", "runtime", "std"]
 compiler = []
-runtime = []
+runtime = ["dep:critical-section"]
 std = []
 cuda = []
-

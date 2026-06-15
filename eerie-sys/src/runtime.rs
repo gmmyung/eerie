@@ -5,4 +5,4 @@
 use core::debug_assert;
 use core::prelude::rust_2021::*;
 
-include!(concat!(env!("OUT_DIR"), "/runtime/iree/runtime/api.rs"));
+include!(concat!(env!("OUT_DIR"), "/runtime.rs"));

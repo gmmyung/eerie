@@ -5,12 +5,5 @@ pub mod compiler;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
-#[cfg(not(feature = "std"))]
-#[no_mangle]
-pub extern "C" fn _fini() -> ! {
-    loop {}
-}
-
-#[cfg(not(feature = "std"))]
-#[no_mangle]
-static end: u8 = 0;
+#[cfg(all(target_os = "none", not(feature = "std"), feature = "runtime"))]
+mod bare_metal_sync;

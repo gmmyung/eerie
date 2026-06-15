@@ -56,7 +56,7 @@ impl<'a> From<ConstByteSpan<'a>> for &'a [u8] {
 /// A wrapper for a string view
 pub struct StringView<'a> {
     pub ctx: sys::iree_string_view_t,
-    marker: PhantomData<&'a mut str>,
+    marker: PhantomData<&'a str>,
 }
 
 impl Display for StringView<'_> {
@@ -86,8 +86,8 @@ impl<'a> From<&'a str> for StringView<'a> {
 impl<'a> From<StringView<'a>> for &'a str {
     fn from(string_view: StringView<'a>) -> Self {
         unsafe {
-            core::str::from_utf8_unchecked_mut(core::slice::from_raw_parts_mut(
-                string_view.ctx.data as *mut u8,
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(
+                string_view.ctx.data as *const u8,
                 string_view.ctx.size,
             ))
         }
@@ -110,33 +110,13 @@ impl Allocator {
     pub fn null_allocator() -> Self {
         let allocator = sys::iree_allocator_t {
             self_: core::ptr::null_mut(),
-            ctl: Some(null_allocator_ctl),
+            ctl: None,
         };
         Self { ctx: allocator }
     }
 }
 
 const ALIGNMENT: usize = 16;
-
-unsafe extern "C" fn null_allocator_ctl(
-    _self_: *mut c_void,
-    command: sys::iree_allocator_command_e,
-    _params: *const c_void,
-    inout_ptr: *mut *mut c_void,
-) -> sys::iree_status_t {
-    match command {
-        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
-            trace!(
-                "null_allocator_ctl: IREE_ALLOCATOR_COMMAND_FREE, {:p}",
-                *inout_ptr
-            );
-        }
-        _ => {
-            trace!("null_allocator_ctl: command: {:?}", command);
-        }
-    }
-    core::ptr::null_mut() as sys::iree_status_t
-}
 
 unsafe extern "C" fn rust_allocator_ctl(
     _self_: *mut c_void,
@@ -148,13 +128,16 @@ unsafe extern "C" fn rust_allocator_ctl(
     match command {
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_MALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            if size > core::isize::MAX as usize {
+            let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
+                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+            };
+            if alloc_size > isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
-            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(
-                size + ALIGNMENT,
-                ALIGNMENT,
-            ));
+            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(alloc_size, ALIGNMENT));
+            if ptr.is_null() {
+                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
+            }
             *(ptr as *mut usize) = size;
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
             trace!(
@@ -166,13 +149,18 @@ unsafe extern "C" fn rust_allocator_ctl(
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            if size > core::isize::MAX as usize {
+            let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
+                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+            };
+            if alloc_size > isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
             let ptr = alloc::alloc::alloc_zeroed(Layout::from_size_align_unchecked(
-                size + ALIGNMENT,
-                ALIGNMENT,
+                alloc_size, ALIGNMENT,
             ));
+            if ptr.is_null() {
+                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
+            }
             *(ptr as *mut usize) = size;
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
             trace!(
@@ -200,14 +188,23 @@ unsafe extern "C" fn rust_allocator_ctl(
                 old_size,
                 new_size
             );
-            if new_size > core::isize::MAX as usize {
+            let Some(new_alloc_size) = new_size.checked_add(ALIGNMENT) else {
+                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+            };
+            if new_alloc_size > isize::MAX as usize {
                 return Status::from_code(StatusErrorKind::OutOfRange).ctx;
             }
+            let Some(old_alloc_size) = old_size.checked_add(ALIGNMENT) else {
+                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+            };
             let ptr = alloc::alloc::realloc(
                 ptr as *mut u8,
-                Layout::from_size_align_unchecked(old_size + ALIGNMENT, ALIGNMENT),
-                new_size + ALIGNMENT,
+                Layout::from_size_align_unchecked(old_alloc_size, ALIGNMENT),
+                new_alloc_size,
             );
+            if ptr.is_null() {
+                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
+            }
             unsafe {
                 *(ptr as *mut usize) = new_size;
             }
@@ -215,6 +212,9 @@ unsafe extern "C" fn rust_allocator_ctl(
             core::ptr::null_mut() as sys::iree_status_t
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_FREE => {
+            if (*inout_ptr).is_null() {
+                return core::ptr::null_mut() as sys::iree_status_t;
+            }
             let ptr = (*inout_ptr).wrapping_sub(ALIGNMENT);
             let size = unsafe { *(ptr as *mut usize) };
             trace!(
@@ -222,9 +222,12 @@ unsafe extern "C" fn rust_allocator_ctl(
                 size,
                 *inout_ptr
             );
+            let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
+                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+            };
             alloc::alloc::dealloc(
                 ptr as *mut u8,
-                Layout::from_size_align_unchecked(size + ALIGNMENT, ALIGNMENT),
+                Layout::from_size_align_unchecked(alloc_size, ALIGNMENT),
             );
             core::ptr::null_mut() as sys::iree_status_t
         }
@@ -245,7 +248,7 @@ impl Status {
     pub(crate) fn from_code(status_kind: StatusErrorKind) -> Self {
         let status: sys::iree_status_code_e = status_kind.into();
         Status {
-            ctx: &STATUS_CODES[status as usize] as *const usize as *mut usize as *mut _,
+            ctx: status as usize as sys::iree_status_t,
         }
     }
 
@@ -304,9 +307,7 @@ pub struct StatusError {
     status: Status,
 }
 
-// TODO: change this when #![feature(error_in_core)] is stabilized
-#[cfg(feature = "std")]
-impl std::error::Error for StatusError {}
+impl core::error::Error for StatusError {}
 
 impl Drop for Status {
     fn drop(&mut self) {
@@ -317,9 +318,6 @@ impl Drop for Status {
         }
     }
 }
-
-// Necessary because status code lifetime is not specified in the C API
-static STATUS_CODES: [usize; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
 /// IREE runtime status error
 pub enum StatusErrorKind {
@@ -340,6 +338,7 @@ pub enum StatusErrorKind {
     DataLoss,
     Unauthenticated,
     Deferred,
+    Incompatible,
     UnknownStatus,
 }
 
@@ -363,6 +362,7 @@ impl From<sys::iree_status_code_e> for StatusErrorKind {
             sys::iree_status_code_e_IREE_STATUS_DATA_LOSS => Self::DataLoss,
             sys::iree_status_code_e_IREE_STATUS_UNAUTHENTICATED => Self::Unauthenticated,
             sys::iree_status_code_e_IREE_STATUS_DEFERRED => Self::Deferred,
+            sys::iree_status_code_e_IREE_STATUS_INCOMPATIBLE => Self::Incompatible,
             _ => Self::UnknownStatus,
         }
     }
@@ -389,6 +389,7 @@ impl From<StatusErrorKind> for sys::iree_status_code_t {
             DataLoss => sys::iree_status_code_e_IREE_STATUS_DATA_LOSS,
             Unauthenticated => sys::iree_status_code_e_IREE_STATUS_UNAUTHENTICATED,
             Deferred => sys::iree_status_code_e_IREE_STATUS_DEFERRED,
+            Incompatible => sys::iree_status_code_e_IREE_STATUS_INCOMPATIBLE,
             UnknownStatus => panic!("Unknown status"),
         }
     }
