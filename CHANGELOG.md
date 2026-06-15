@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-06-15
+
+### Fixed
+
+- Updated docs.rs metadata to build documentation with the `runtime` feature enabled while keeping the `compiler` feature disabled.
+
 ## 0.3.0 - 2026-06-15
 
 Pinned IREE version:
