@@ -8,7 +8,14 @@ use eerie::runtime::{
 };
 use half::f16;
 use log::info;
+use std::sync::{Mutex, MutexGuard};
 use test_log::test;
+
+static RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn runtime_test_lock() -> MutexGuard<'static, ()> {
+    RUNTIME_TEST_LOCK.lock().unwrap()
+}
 
 fn local_sync_device() -> (
     runtime::hal::DriverRegistry,
@@ -23,11 +30,13 @@ fn local_sync_device() -> (
 
 #[test]
 fn test_instance() {
+    let _guard = runtime_test_lock();
     runtime::vm::Instance::new().unwrap();
 }
 
 #[test]
 fn test_context_with_hal_module() {
+    let _guard = runtime_test_lock();
     let instance = runtime::vm::Instance::new().unwrap();
     let (_registry, _driver, device) = local_sync_device();
     let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
@@ -36,6 +45,7 @@ fn test_context_with_hal_module() {
 
 #[test]
 fn device_metadata() {
+    let _guard = runtime_test_lock();
     let (_registry, driver, device) = local_sync_device();
     let devices = driver.available_devices().unwrap();
     assert!(!devices.is_empty());
@@ -51,6 +61,7 @@ fn device_metadata() {
 
 #[test]
 fn dynamic_list() {
+    let _guard = runtime_test_lock();
     let instance = runtime::vm::Instance::new().unwrap();
     let mut list = List::<Value<i32>>::new(4, &instance).unwrap();
     list.push_value(1.to_value()).unwrap();
@@ -64,6 +75,7 @@ fn dynamic_list() {
 
 #[test]
 fn ref_list() {
+    let _guard = runtime_test_lock();
     let instance = runtime::vm::Instance::new().unwrap();
     let (_registry, _driver, device) = local_sync_device();
     let mut list = List::<Undefined>::new(4, &instance).unwrap();
@@ -88,6 +100,7 @@ fn ref_list() {
 
 #[test]
 fn fp16_buffer() {
+    let _guard = runtime_test_lock();
     let (_registry, _driver, device) = local_sync_device();
     let buffer = BufferView::<f16>::from_host(
         &device,
@@ -116,6 +129,7 @@ fn fp16_buffer() {
 
 #[test]
 fn buffer_metadata() {
+    let _guard = runtime_test_lock();
     let (_registry, _driver, device) = local_sync_device();
     let buffer = BufferView::<f32>::from_host(
         &device,
@@ -137,6 +151,7 @@ fn buffer_metadata() {
 
 #[test]
 fn raw_buffer_allocation_and_view() {
+    let _guard = runtime_test_lock();
     let (_registry, _driver, device) = local_sync_device();
     let buffer = Buffer::allocate(
         &device,
@@ -168,6 +183,7 @@ fn raw_buffer_allocation_and_view() {
 
 #[test]
 fn buffer_shape_mismatch_is_rejected() {
+    let _guard = runtime_test_lock();
     let (_registry, _driver, device) = local_sync_device();
     let err = BufferView::<f32>::from_host(
         &device,
@@ -182,6 +198,7 @@ fn buffer_shape_mismatch_is_rejected() {
 
 #[test]
 fn tensor_read_write_and_copy() {
+    let _guard = runtime_test_lock();
     let (_registry, _driver, device) = local_sync_device();
     let tensor = Tensor::<f32>::from_slice(&device, &[2, 2], &[1.0, 2.0, 3.0, 4.0]).unwrap();
     assert_eq!(tensor.shape(), vec![2, 2]);
@@ -211,6 +228,7 @@ fn tensor_read_write_and_copy() {
 
 #[test]
 fn append_module_from_vmvx_fixture() {
+    let _guard = runtime_test_lock();
     let vmfb = include_bytes!("mul_vmvx.vmfb");
     let output = run_mul(vmfb, "local-sync");
     assert_eq!(output[0], 0.0);
@@ -220,6 +238,7 @@ fn append_module_from_vmvx_fixture() {
 
 #[test]
 fn function_metadata_and_tensor_invoke() {
+    let _guard = runtime_test_lock();
     let vmfb = include_bytes!("mul_vmvx.vmfb");
     let instance = runtime::vm::Instance::new().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
@@ -312,7 +331,7 @@ mod integration_tests {
     use std::path::Path;
     use std::sync::Mutex;
 
-    use super::run_mul;
+    use super::{run_mul, runtime_test_lock};
 
     static COMPILER: Mutex<Option<compiler::Compiler>> = Mutex::new(None);
 
@@ -353,6 +372,7 @@ mod integration_tests {
 
     #[test]
     fn append_module() {
+        let _guard = runtime_test_lock();
         let vmfb = compile_mul("llvm-cpu");
         let output = run_mul(&vmfb, "local-sync");
         info!("Output: {:?}", output);
@@ -363,6 +383,7 @@ mod integration_tests {
 
     #[test]
     fn metal_smoke() {
+        let _guard = runtime_test_lock();
         if std::env::var("EERIE_TEST_METAL").as_deref() != Ok("1") {
             return;
         }
