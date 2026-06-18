@@ -11,7 +11,7 @@ use log::trace;
 use super::{
     base::{self, ConstByteSpan, StringView},
     error::RuntimeError,
-    hal::{BufferElement, BufferView, Device, Tensor},
+    hal::{BufferElement, BufferView, Device},
 };
 
 #[cfg(feature = "std")]
@@ -506,32 +506,6 @@ impl Function {
             .map_err(Into::into)
         })
     }
-
-    /// Invokes a function with homogeneous typed tensor inputs and outputs.
-    ///
-    /// Mixed scalar/ref calls should use `List` directly.
-    pub fn invoke_tensors<T: BufferElement>(
-        &self,
-        inputs: &[&Tensor<T>],
-        output_count: usize,
-    ) -> Result<Vec<Tensor<T>>, RuntimeError> {
-        let instance = self.context.instance();
-        let mut input_list = List::<Undefined>::new(inputs.len(), instance)?;
-        for input in inputs {
-            let input_ref = input.to_ref(instance)?;
-            input_list.push_ref(&input_ref)?;
-        }
-
-        let mut output_list = List::<Undefined>::new(output_count, instance)?;
-        self.invoke(&input_list, &mut output_list)?;
-
-        let mut outputs = Vec::with_capacity(output_count);
-        for index in 0..output_count {
-            let output_ref = output_list.get_ref::<BufferView<T>>(index)?;
-            outputs.push(Tensor::from_buffer_view(output_ref.to_buffer_view()?));
-        }
-        Ok(outputs)
-    }
 }
 
 /// Reflected VM function signature metadata.
@@ -686,31 +660,6 @@ impl<T: BufferElement> ToRef for BufferView<T> {
         base::Status::from_raw(unsafe {
             sys::iree_vm_ref_wrap_retain(
                 self.ctx as *mut core::ffi::c_void,
-                Self::ref_type(instance),
-                &mut ctx,
-            )
-        })
-        .to_result()?;
-        Ok(Ref {
-            ctx,
-            instance: instance.clone(),
-            _marker: PhantomData,
-        })
-    }
-}
-
-impl<T: BufferElement> RefObject for Tensor<T> {
-    fn ref_type(instance: &Instance) -> sys::iree_vm_ref_type_t {
-        BufferView::<T>::ref_type(instance)
-    }
-}
-
-impl<T: BufferElement> ToRef for Tensor<T> {
-    fn to_ref(&self, instance: &Instance) -> Result<Ref<Self>, RuntimeError> {
-        let mut ctx = sys::iree_vm_ref_t::default();
-        base::Status::from_raw(unsafe {
-            sys::iree_vm_ref_wrap_retain(
-                self.as_buffer_view().ctx as *mut core::ffi::c_void,
                 Self::ref_type(instance),
                 &mut ctx,
             )

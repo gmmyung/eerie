@@ -59,11 +59,12 @@ fn output_vmfb() -> Vec<u8> {
     Vec::from(output.map_memory().unwrap())
 }
 ```
-Running the tensor operation in a IREE runtime environment
+Running a buffer view operation in an IREE runtime environment
 ```rust
 #[cfg(feature = "runtime")]
 fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     use eerie::runtime::*;
+    use eerie::runtime::vm::ToRef;
 
     let instance = vm::Instance::new().unwrap();
     let registry = hal::DriverRegistry::with_available_drivers().unwrap();
@@ -74,13 +75,24 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     let context = vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
     let function = context.resolve_function("arithmetic.simple_mul").unwrap();
 
-    let input = hal::Tensor::<f32>::from_slice(
+    let input = hal::BufferView::<f32>::from_host(
         &device,
         &[4],
+        hal::Encoding::DenseRowMajor,
         &[1.0, 2.0, 3.0, 4.0]
     ).unwrap();
-    let outputs = function.invoke_tensors(&[&input, &input], 1).unwrap();
-    outputs[0].read_to_vec(&device).unwrap()
+    let mut inputs = vm::List::<vm::Undefined>::new(2, &instance).unwrap();
+    inputs.push_ref(&input.to_ref(&instance).unwrap()).unwrap();
+    inputs.push_ref(&input.to_ref(&instance).unwrap()).unwrap();
+    let mut outputs = vm::List::<vm::Undefined>::new(1, &instance).unwrap();
+    function.invoke(&inputs, &mut outputs).unwrap();
+    outputs
+        .get_ref::<hal::BufferView<f32>>(0)
+        .unwrap()
+        .to_buffer_view()
+        .unwrap()
+        .read_to_vec(&device)
+        .unwrap()
 }
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
@@ -90,6 +102,11 @@ The crate is divided into two sections: compiler and runtime. You can enable eac
 
 ### Runtime
 Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
+
+Typed tensor-shaped runtime values are represented by `runtime::hal::BufferView<T>`.
+Function calls use VM `List` values directly: convert input buffer views with
+`ToRef`, call `runtime::vm::Function::invoke`, then extract output
+`Ref<BufferView<T>>` values from the output list.
 
 #### MacOS
 Install XCode and MacOS SDKs.
@@ -132,6 +149,17 @@ rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
 [env]
 LIB_IREE_COMPILER = "/path/to/library"
 ```
+
+## Development
+Use the Nix shell for the pinned C/C++ and Rust toolchain:
+```sh
+nix develop
+cargo test --features compiler,runtime,std
+cargo check --no-default-features --features runtime
+```
+
+`cargo test --all-features` also enables the `cuda` feature and requires a CUDA
+toolkit configured for IREE's CMake build.
 
 ## References
 - Also look at [SamKG/iree-rs](https://github.com/SamKG/iree-rs/tree/main)

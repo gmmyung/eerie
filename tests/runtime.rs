@@ -3,7 +3,7 @@
 use eerie::runtime::{
     self,
     error::RuntimeError,
-    hal::{Buffer, BufferMapping, BufferParams, BufferView, ElementType, Encoding, Tensor},
+    hal::{Buffer, BufferMapping, BufferParams, BufferView, ElementType, Encoding},
     vm::{FunctionLinkage, List, ToRef, ToValue, Undefined, Value},
 };
 use half::f16;
@@ -181,28 +181,37 @@ fn buffer_shape_mismatch_is_rejected() {
 }
 
 #[test]
-fn tensor_read_write_and_copy() {
+fn buffer_view_read_write_and_copy() {
     let (_registry, _driver, device) = local_sync_device();
-    let tensor = Tensor::<f32>::from_slice(&device, &[2, 2], &[1.0, 2.0, 3.0, 4.0]).unwrap();
-    assert_eq!(tensor.shape(), vec![2, 2]);
+    let buffer = BufferView::<f32>::from_host(
+        &device,
+        &[2, 2],
+        Encoding::DenseRowMajor,
+        &[1.0, 2.0, 3.0, 4.0],
+    )
+    .unwrap();
+    assert_eq!(buffer.shape(), vec![2, 2]);
     assert_eq!(
-        tensor.read_to_vec(&device).unwrap(),
+        buffer.read_to_vec(&device).unwrap(),
         vec![1.0, 2.0, 3.0, 4.0]
     );
 
-    tensor
+    buffer
         .write_from_slice(&device, &[5.0, 6.0, 7.0, 8.0])
         .unwrap();
     assert_eq!(
-        tensor.read_to_vec(&device).unwrap(),
+        buffer.read_to_vec(&device).unwrap(),
         vec![5.0, 6.0, 7.0, 8.0]
     );
 
-    let target = Tensor::<f32>::from_slice(&device, &[2, 2], &[0.0, 0.0, 0.0, 0.0]).unwrap();
-    tensor
-        .as_buffer_view()
-        .copy_to(&device, target.as_buffer_view())
-        .unwrap();
+    let target = BufferView::<f32>::from_host(
+        &device,
+        &[2, 2],
+        Encoding::DenseRowMajor,
+        &[0.0, 0.0, 0.0, 0.0],
+    )
+    .unwrap();
+    buffer.copy_to(&device, &target).unwrap();
     assert_eq!(
         target.read_to_vec(&device).unwrap(),
         vec![5.0, 6.0, 7.0, 8.0]
@@ -219,7 +228,7 @@ fn append_module_from_vmvx_fixture() {
 }
 
 #[test]
-fn function_metadata_and_tensor_invoke() {
+fn function_metadata_and_buffer_view_invoke() {
     let vmfb = include_bytes!("mul_vmvx.vmfb");
     let instance = runtime::vm::Instance::new().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
@@ -258,9 +267,14 @@ fn function_metadata_and_tensor_invoke() {
     assert!(function.lookup_attr("missing.function.attr").is_none());
 
     let input_data = Vec::from_iter((0..100).map(|i| i as f32));
-    let input = Tensor::<f32>::from_slice(&device, &[100], input_data.as_slice()).unwrap();
-    let outputs = function.invoke_tensors(&[&input, &input], 1).unwrap();
-    let output = outputs[0].read_to_vec(&device).unwrap();
+    let input = BufferView::<f32>::from_host(
+        &device,
+        &[100],
+        Encoding::DenseRowMajor,
+        input_data.as_slice(),
+    )
+    .unwrap();
+    let output = invoke_mul_function(&function, &instance, &device, &input);
     assert_eq!(output[0], 0.0);
     assert_eq!(output[7], 49.0);
     assert_eq!(output[99], 9801.0);
@@ -282,9 +296,14 @@ fn invoke_after_newer_instance_rebinds_hal_types() {
     let _newer_instance = runtime::vm::Instance::new().unwrap();
 
     let input_data = Vec::from_iter((0..100).map(|i| i as f32));
-    let input = Tensor::<f32>::from_slice(&device, &[100], input_data.as_slice()).unwrap();
-    let outputs = function.invoke_tensors(&[&input, &input], 1).unwrap();
-    let output = outputs[0].read_to_vec(&device).unwrap();
+    let input = BufferView::<f32>::from_host(
+        &device,
+        &[100],
+        Encoding::DenseRowMajor,
+        input_data.as_slice(),
+    )
+    .unwrap();
+    let output = invoke_mul_function(&function, &instance, &device, &input);
     assert_eq!(output[0], 0.0);
     assert_eq!(output[7], 49.0);
     assert_eq!(output[99], 9801.0);
@@ -328,17 +347,24 @@ fn run_mul(vmfb: &[u8], driver_name: &str) -> Vec<f32> {
     )
     .unwrap();
 
-    let mut input_list = List::<Undefined>::new(2, &instance).unwrap();
-    input_list
-        .push_ref(&input.to_ref(&instance).unwrap())
-        .unwrap();
-    input_list
-        .push_ref(&input.to_ref(&instance).unwrap())
-        .unwrap();
-    let mut output_list = List::<Undefined>::new(1, &instance).unwrap();
+    invoke_mul_function(&function, &instance, &device, &input)
+}
 
+fn invoke_mul_function(
+    function: &runtime::vm::Function,
+    instance: &runtime::vm::Instance,
+    device: &runtime::hal::Device,
+    input: &BufferView<f32>,
+) -> Vec<f32> {
+    let mut input_list = List::<Undefined>::new(2, instance).unwrap();
+    input_list
+        .push_ref(&input.to_ref(instance).unwrap())
+        .unwrap();
+    input_list
+        .push_ref(&input.to_ref(instance).unwrap())
+        .unwrap();
+    let mut output_list = List::<Undefined>::new(1, instance).unwrap();
     function.invoke(&input_list, &mut output_list).unwrap();
-
     let output_ref = output_list.get_ref::<BufferView<f32>>(0).unwrap();
     output_ref
         .to_buffer_view()

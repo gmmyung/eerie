@@ -2,7 +2,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-use eerie::runtime::hal::Tensor;
+use eerie::runtime::vm::ToRef;
 #[cfg(all(feature = "compiler", feature = "runtime"))]
 fn compile_mlir(data: &[u8]) -> Vec<u8> {
     use eerie::compiler;
@@ -82,12 +82,32 @@ fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
     let function = context
         .resolve_function("module.serving_default")
         .expect("failed to resolve module.serving_default");
-    let input = Tensor::<f32>::from_slice(&device, &[1, 3, 224, 224], image_bin)
-        .expect("failed to upload input image tensor");
-    let outputs = function
-        .invoke_tensors(&[&input], 1)
+    let input = runtime::hal::BufferView::<f32>::from_host(
+        &device,
+        &[1, 3, 224, 224],
+        runtime::hal::Encoding::DenseRowMajor,
+        image_bin,
+    )
+    .expect("failed to upload input image tensor");
+    let mut inputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
+        .expect("failed to create VM input list");
+    inputs
+        .push_ref(
+            &input
+                .to_ref(&instance)
+                .expect("failed to retain input buffer view"),
+        )
+        .expect("failed to push input buffer view");
+    let mut outputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
+        .expect("failed to create VM output list");
+    function
+        .invoke(&inputs, &mut outputs)
         .expect("failed to invoke module.serving_default");
-    outputs[0]
+    outputs
+        .get_ref::<runtime::hal::BufferView<f32>>(0)
+        .expect("missing output buffer view")
+        .to_buffer_view()
+        .expect("failed to retain output buffer view")
         .read_to_vec(&device)
         .expect("failed to read output tensor to host")
 }

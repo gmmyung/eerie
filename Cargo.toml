@@ -1,6 +1,6 @@
 [package]
 name = "eerie"
-version = "0.3.3"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Gyungmin Myung"]

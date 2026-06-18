@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 - 2026-06-18
+
+### Changed
+
+- Removed the redundant `runtime::hal::Tensor<T>` wrapper. Use `runtime::hal::BufferView<T>` directly for typed HAL buffer views.
+- Removed `runtime::vm::Function::invoke_tensors`. Build VM `List` arguments explicitly with `BufferView<T>::to_ref`, call `Function::invoke`, then read `Ref<BufferView<T>>` outputs.
+- Updated runtime tests, README snippets, and examples to use `BufferView<T>` as the single typed runtime tensor/buffer abstraction.
+
+### Notes
+
+- `eerie-sys` remains at `0.3.2`; this release only changes the safe wrapper crate API.
+
 ## 0.3.3 - 2026-06-15
 
 ### Fixed
