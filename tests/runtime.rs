@@ -310,6 +310,51 @@ fn invoke_after_newer_instance_rebinds_hal_types() {
 }
 
 #[test]
+fn invoke_rebinds_prepared_hal_argument_refs() {
+    let vmfb = include_bytes!("mul_vmvx.vmfb");
+    let instance = runtime::vm::Instance::new().unwrap();
+    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver("local-sync").unwrap();
+    let device = driver.create_default_device().unwrap();
+    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
+    let bytecode_module = runtime::vm::Module::bytecode(&instance, vmfb).unwrap();
+    let context =
+        runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
+    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
+
+    let input_data = Vec::from_iter((0..100).map(|i| i as f32));
+    let input = BufferView::<f32>::from_host(
+        &device,
+        &[100],
+        Encoding::DenseRowMajor,
+        input_data.as_slice(),
+    )
+    .unwrap();
+    let mut input_list = List::<Undefined>::new(2, &instance).unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+
+    let _newer_instance = runtime::vm::Instance::new().unwrap();
+
+    let mut output_list = List::<Undefined>::new(1, &instance).unwrap();
+    function.invoke(&input_list, &mut output_list).unwrap();
+    let output = output_list
+        .get_ref::<BufferView<f32>>(0)
+        .unwrap()
+        .to_buffer_view()
+        .unwrap()
+        .read_to_vec(&device)
+        .unwrap();
+    assert_eq!(output[0], 0.0);
+    assert_eq!(output[7], 49.0);
+    assert_eq!(output[99], 9801.0);
+}
+
+#[test]
 fn parallel_instance_invocations_rebind_hal_types() {
     let mut threads = Vec::new();
     for _ in 0..2 {

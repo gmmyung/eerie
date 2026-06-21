@@ -56,6 +56,39 @@ fn with_hal_type_adapters<T>(
     })
 }
 
+fn rebind_hal_refs<T: Type>(instance: &Instance, list: &List<T>) -> Result<(), RuntimeError> {
+    let count = unsafe { sys::iree_vm_list_size(list.ctx) };
+    for index in 0..count {
+        let mut value = sys::iree_vm_ref_t::default();
+        let status = base::Status::from_raw(unsafe {
+            sys::iree_vm_list_get_ref_assign(list.ctx, index, &mut value)
+        });
+        if status.to_result().is_err()
+            || value.type_
+                == sys::iree_vm_ref_type_bits_t_IREE_VM_REF_TYPE_NULL as sys::iree_vm_ref_type_t
+        {
+            continue;
+        }
+
+        let type_name = string_view_to_string(unsafe { sys::iree_vm_ref_type_name(value.type_) });
+        if !type_name.starts_with("hal.") {
+            continue;
+        }
+
+        let rebound_type = instance.lookup_type(&type_name);
+        if rebound_type == 0 || rebound_type == value.type_ {
+            continue;
+        }
+
+        value.type_ = rebound_type;
+        base::Status::from_raw(unsafe {
+            sys::iree_vm_list_set_ref_retain(list.ctx, index, &value)
+        })
+        .to_result()?;
+    }
+    Ok(())
+}
+
 /// A VM instance owns registered VM ref types and VM-level host allocation.
 pub struct Instance {
     pub(crate) ctx: *mut sys::iree_vm_instance_t,
@@ -490,6 +523,7 @@ impl Function {
         O: Type,
     {
         with_hal_type_adapters(&self.context.instance, || {
+            rebind_hal_refs(&self.context.instance, inputs)?;
             base::Status::from_raw(unsafe {
                 trace!("iree_vm_invoke");
                 sys::iree_vm_invoke(
