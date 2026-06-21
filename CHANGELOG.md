@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 - 2026-06-21
+
+### Fixed
+
+- Map Rust signed integer `BufferView<T>` element types to IREE signless integer HAL element types (`Int8`/`Int16`/`Int32`/`Int64`) so MLIR `i*` tensor ABIs round-trip correctly through typed buffer views.
+
+### Notes
+
+- `eerie-sys` remains at `0.3.2`; this patch only changes the safe wrapper crate.
+
 ## 0.4.0 - 2026-06-18
 
 ### Changed
