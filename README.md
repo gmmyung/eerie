@@ -107,6 +107,8 @@ Typed tensor-shaped runtime values are represented by `runtime::hal::BufferView<
 Function calls use VM `List` values directly: convert input buffer views with
 `ToRef`, call `runtime::vm::Function::invoke`, then extract output
 `Ref<BufferView<T>>` values from the output list.
+Supported `BufferView<T>` element types are `bool` (IREE Bool8), signed and
+unsigned 8/16/32/64-bit integers, `f16`, `bf16`, `f32`, and `f64`.
 
 #### MacOS
 Install XCode and MacOS SDKs.

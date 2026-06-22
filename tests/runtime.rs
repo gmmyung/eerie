@@ -115,6 +115,69 @@ fn fp16_buffer() {
 }
 
 #[test]
+fn bool_buffer_roundtrip_read_write_copy_and_mapping() {
+    let (_registry, _driver, device) = local_sync_device();
+    let buffer = BufferView::<bool>::from_host(
+        &device,
+        &[2, 2],
+        Encoding::DenseRowMajor,
+        &[true, false, true, false],
+    )
+    .unwrap();
+
+    assert_eq!(buffer.element_type(), ElementType::Bool8);
+    assert_eq!(buffer.element_size(), core::mem::size_of::<bool>());
+    assert_eq!(
+        buffer.read_to_vec(&device).unwrap(),
+        vec![true, false, true, false]
+    );
+
+    let mapping = BufferMapping::map_read(&buffer).unwrap();
+    assert_eq!(mapping.data(), &[true, false, true, false]);
+    drop(mapping);
+
+    buffer
+        .write_from_slice(&device, &[false, true, false, true])
+        .unwrap();
+    assert_eq!(
+        buffer.read_to_vec(&device).unwrap(),
+        vec![false, true, false, true]
+    );
+
+    let target = BufferView::<bool>::from_host(
+        &device,
+        &[2, 2],
+        Encoding::DenseRowMajor,
+        &[false, false, false, false],
+    )
+    .unwrap();
+    buffer.copy_to(&device, &target).unwrap();
+    assert_eq!(
+        target.read_to_vec(&device).unwrap(),
+        vec![false, true, false, true]
+    );
+}
+
+#[test]
+fn bool_buffer_rejects_invalid_bool8_bytes() {
+    let (_registry, _driver, device) = local_sync_device();
+    let buffer = Buffer::allocate(&device, 1, BufferParams::default()).unwrap();
+    let raw_view = BufferView::<u8>::from_buffer(&buffer, &[1], Encoding::DenseRowMajor).unwrap();
+    raw_view.write_from_slice(&device, &[2]).unwrap();
+
+    let bool_view =
+        BufferView::<bool>::from_buffer(&buffer, &[1], Encoding::DenseRowMajor).unwrap();
+    let err = bool_view.read_to_vec(&device).unwrap_err();
+    assert!(format!("{err}").contains("invalid Bool8 value 2"));
+
+    let err = match BufferMapping::map_read(&bool_view) {
+        Ok(_) => panic!("invalid Bool8 mapping succeeded"),
+        Err(err) => err,
+    };
+    assert!(format!("{err}").contains("invalid Bool8 value 2"));
+}
+
+#[test]
 fn buffer_metadata() {
     let (_registry, _driver, device) = local_sync_device();
     let buffer = BufferView::<f32>::from_host(
@@ -418,6 +481,40 @@ fn invoke_mul_function(
         .unwrap()
 }
 
+fn run_bool_not(vmfb: &[u8], driver_name: &str) -> Vec<bool> {
+    let instance = runtime::vm::Instance::new().unwrap();
+    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
+    let driver = registry.create_driver(driver_name).unwrap();
+    let device = driver.create_default_device().unwrap();
+    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
+    let bytecode_module = runtime::vm::Module::bytecode(&instance, vmfb).unwrap();
+    let context =
+        runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
+    let function = context.resolve_function("bools.logical_not").unwrap();
+
+    let input = BufferView::<bool>::from_host(
+        &device,
+        &[4],
+        Encoding::DenseRowMajor,
+        &[true, false, false, true],
+    )
+    .unwrap();
+
+    let mut input_list = List::<Undefined>::new(1, &instance).unwrap();
+    input_list
+        .push_ref(&input.to_ref(&instance).unwrap())
+        .unwrap();
+    let mut output_list = List::<Undefined>::new(1, &instance).unwrap();
+    function.invoke(&input_list, &mut output_list).unwrap();
+    output_list
+        .get_ref::<BufferView<bool>>(0)
+        .unwrap()
+        .to_buffer_view()
+        .unwrap()
+        .read_to_vec(&device)
+        .unwrap()
+}
+
 #[cfg(feature = "compiler")]
 mod integration_tests {
     use eerie::compiler;
@@ -425,7 +522,7 @@ mod integration_tests {
     use std::path::Path;
     use std::sync::Mutex;
 
-    use super::run_mul;
+    use super::{run_bool_not, run_mul};
 
     static COMPILER: Mutex<Option<compiler::Compiler>> = Mutex::new(None);
 
@@ -438,6 +535,14 @@ mod integration_tests {
     }
 
     fn compile_mul(target_backend: &str) -> Vec<u8> {
+        compile_mlir(target_backend, Path::new("tests/mul.mlir"))
+    }
+
+    fn compile_bool_not(target_backend: &str) -> Vec<u8> {
+        compile_mlir(target_backend, Path::new("tests/bool.mlir"))
+    }
+
+    fn compile_mlir(target_backend: &str, path: &Path) -> Vec<u8> {
         init_compiler();
         let compiler = COMPILER.lock().unwrap();
         let mut compiler_session = compiler.as_ref().unwrap().create_session();
@@ -446,9 +551,7 @@ mod integration_tests {
             flags.push("--iree-metal-compile-to-metallib=false".to_string());
         }
         compiler_session.set_flags(flags).unwrap();
-        let source = compiler_session
-            .create_source_from_file(Path::new("tests/mul.mlir"))
-            .unwrap();
+        let source = compiler_session.create_source_from_file(path).unwrap();
         let mut invocation = compiler_session.create_invocation();
         let mut output = compiler::MemBufferOutput::new(compiler.as_ref().unwrap()).unwrap();
         invocation
@@ -472,6 +575,13 @@ mod integration_tests {
         assert_eq!(output[0], 0.0);
         assert_eq!(output[7], 49.0);
         assert_eq!(output[99], 9801.0);
+    }
+
+    #[test]
+    fn bool_buffer_view_invoke() {
+        let vmfb = compile_bool_not("llvm-cpu");
+        let output = run_bool_not(&vmfb, "local-sync");
+        assert_eq!(output, vec![false, true, true, false]);
     }
 
     #[test]
