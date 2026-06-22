@@ -31,4 +31,6 @@ jobs:
         LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml
         
     - name: Run tests
-      run: RUST_BACKTRACE=1 cargo test -vv --release
+      # Serialize runtime tests while IREE multi-instance HAL type registration
+      # is under investigation: https://github.com/iree-org/iree/issues/24615
+      run: RUST_BACKTRACE=1 cargo test -vv --release -- --test-threads=1
