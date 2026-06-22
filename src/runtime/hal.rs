@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{borrow::Cow, format, string::String, vec::Vec};
 use core::{
     fmt::{Debug, Formatter},
     marker::PhantomData,
@@ -425,12 +425,26 @@ impl From<sys::iree_hal_element_type_t> for ElementType {
     }
 }
 
-/// A scalar element type that can be copied to and from raw HAL buffer storage.
+/// A scalar element type that can be copied to and from HAL buffer storage.
 ///
-/// This trait is sealed because `BufferView` reads device bytes directly into
-/// `Vec<T>`. Only types with plain byte representations should implement it.
+/// This trait is sealed so the runtime wrapper can preserve Rust validity
+/// invariants while decoding raw device bytes.
 pub trait BufferElement: Copy + private::Sealed {
+    #[doc(hidden)]
+    const IS_RAW_STORAGE_COMPATIBLE: bool;
+
     fn element_type() -> ElementType;
+
+    #[doc(hidden)]
+    fn element_size() -> usize {
+        core::mem::size_of::<Self>()
+    }
+
+    #[doc(hidden)]
+    fn as_bytes(data: &[Self]) -> Cow<'_, [u8]>;
+
+    #[doc(hidden)]
+    fn decode_slice(bytes: &[u8]) -> Result<Vec<Self>, RuntimeError>;
 }
 
 macro_rules! impl_buffer_element {
@@ -438,8 +452,44 @@ macro_rules! impl_buffer_element {
         impl private::Sealed for $type {}
 
         impl BufferElement for $type {
+            const IS_RAW_STORAGE_COMPATIBLE: bool = true;
+
             fn element_type() -> ElementType {
                 ElementType::$variant
+            }
+
+            fn as_bytes(data: &[Self]) -> Cow<'_, [u8]> {
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        data.as_ptr() as *const u8,
+                        core::mem::size_of_val(data),
+                    )
+                };
+                Cow::Borrowed(bytes)
+            }
+
+            fn decode_slice(bytes: &[u8]) -> Result<Vec<Self>, RuntimeError> {
+                let element_size = Self::element_size();
+                debug_assert_ne!(element_size, 0);
+                if !bytes.len().is_multiple_of(element_size) {
+                    return Err(RuntimeError::InvalidArgument(format!(
+                        "buffer byte length {} is not divisible by element size {}",
+                        bytes.len(),
+                        element_size
+                    )));
+                }
+
+                let element_len = bytes.len() / element_size;
+                let mut data = Vec::<Self>::with_capacity(element_len);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        data.as_mut_ptr() as *mut u8,
+                        bytes.len(),
+                    );
+                    data.set_len(element_len);
+                }
+                Ok(data)
             }
         }
     };
@@ -457,6 +507,34 @@ impl_buffer_element!(f32, Float32);
 impl_buffer_element!(f64, Float64);
 impl_buffer_element!(f16, Float16);
 impl_buffer_element!(bf16, BFloat16);
+
+impl private::Sealed for bool {}
+
+impl BufferElement for bool {
+    const IS_RAW_STORAGE_COMPATIBLE: bool = false;
+
+    fn element_type() -> ElementType {
+        ElementType::Bool8
+    }
+
+    fn as_bytes(data: &[Self]) -> Cow<'_, [u8]> {
+        Cow::Owned(data.iter().map(|&value| u8::from(value)).collect())
+    }
+
+    fn decode_slice(bytes: &[u8]) -> Result<Vec<Self>, RuntimeError> {
+        bytes
+            .iter()
+            .enumerate()
+            .map(|(index, &value)| match value {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err(RuntimeError::InvalidArgument(format!(
+                    "invalid Bool8 value {value} at element {index}; expected 0 or 1"
+                ))),
+            })
+            .collect()
+    }
+}
 
 pub type MemoryType = sys::iree_hal_memory_type_t;
 pub type MemoryAccess = sys::iree_hal_memory_access_t;
@@ -616,12 +694,10 @@ impl<T: BufferElement> BufferView<T> {
         }
 
         let mut ctx = core::ptr::null_mut();
-        let bytes: ConstByteSpan = unsafe {
-            core::slice::from_raw_parts(data.as_ptr() as *const u8, core::mem::size_of_val(data))
-        }
-        .into();
+        let encoded = T::as_bytes(data);
+        let bytes: ConstByteSpan = encoded.as_ref().into();
         debug!("shape: {:?}", shape);
-        debug!("data len: {}", core::mem::size_of_val(data));
+        debug!("data len: {}", encoded.len());
         base::Status::from_raw(unsafe {
             sys::iree_hal_buffer_view_allocate_buffer_copy(
                 device.ctx,
@@ -671,17 +747,14 @@ impl<T: BufferElement> BufferView<T> {
         shape: &[usize],
         encoding: Encoding,
     ) -> Result<Self, RuntimeError> {
-        let expected_byte_length =
-            shape
-                .iter()
-                .try_fold(core::mem::size_of::<T>(), |product, dim| {
-                    product.checked_mul(*dim).ok_or_else(|| {
-                        RuntimeError::InvalidArgument(format!(
-                            "buffer shape {:?} overflows usize byte count",
-                            shape
-                        ))
-                    })
-                })?;
+        let expected_byte_length = shape.iter().try_fold(T::element_size(), |product, dim| {
+            product.checked_mul(*dim).ok_or_else(|| {
+                RuntimeError::InvalidArgument(format!(
+                    "buffer shape {:?} overflows usize byte count",
+                    shape
+                ))
+            })
+        })?;
         if expected_byte_length > buffer.byte_length() {
             return Err(RuntimeError::InvalidArgument(format!(
                 "buffer view requires {} bytes, buffer has {} bytes",
@@ -758,11 +831,12 @@ impl<T: BufferElement> BufferView<T> {
                 data.len()
             )));
         }
-        let byte_length = core::mem::size_of_val(data);
+        let encoded = T::as_bytes(data);
+        let byte_length = encoded.len();
         base::Status::from_raw(unsafe {
             sys::iree_hal_device_transfer_h2d(
                 device.ctx,
-                data.as_ptr() as *const core::ffi::c_void,
+                encoded.as_ref().as_ptr() as *const core::ffi::c_void,
                 self.buffer(),
                 0,
                 byte_length,
@@ -810,22 +884,42 @@ impl<T: BufferElement> BufferView<T> {
             )));
         }
         let byte_length = self.byte_length();
-        let element_size = core::mem::size_of::<T>();
-        debug_assert_ne!(element_size, 0);
-        if !byte_length.is_multiple_of(element_size) {
-            return Err(RuntimeError::InvalidArgument(format!(
-                "buffer byte length {} is not divisible by element size {}",
-                byte_length, element_size
-            )));
+        if T::IS_RAW_STORAGE_COMPATIBLE {
+            let element_size = T::element_size();
+            debug_assert_ne!(element_size, 0);
+            if !byte_length.is_multiple_of(element_size) {
+                return Err(RuntimeError::InvalidArgument(format!(
+                    "buffer byte length {} is not divisible by element size {}",
+                    byte_length, element_size
+                )));
+            }
+
+            let mut data = Vec::<T>::with_capacity(byte_length / element_size);
+            base::Status::from_raw(unsafe {
+                sys::iree_hal_device_transfer_d2h(
+                    device.ctx,
+                    self.buffer(),
+                    0,
+                    data.as_mut_ptr() as *mut core::ffi::c_void,
+                    byte_length,
+                    sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+                    infinite_timeout(),
+                )
+            })
+            .to_result()?;
+            unsafe {
+                data.set_len(byte_length / element_size);
+            }
+            return Ok(data);
         }
 
-        let mut data = Vec::<T>::with_capacity(byte_length / element_size);
+        let mut bytes = Vec::<u8>::with_capacity(byte_length);
         base::Status::from_raw(unsafe {
             sys::iree_hal_device_transfer_d2h(
                 device.ctx,
                 self.buffer(),
                 0,
-                data.as_mut_ptr() as *mut core::ffi::c_void,
+                bytes.as_mut_ptr() as *mut core::ffi::c_void,
                 byte_length,
                 sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
                 infinite_timeout(),
@@ -833,9 +927,9 @@ impl<T: BufferElement> BufferView<T> {
         })
         .to_result()?;
         unsafe {
-            data.set_len(byte_length / element_size);
+            bytes.set_len(byte_length);
         }
-        Ok(data)
+        T::decode_slice(&bytes)
     }
 }
 
@@ -873,7 +967,12 @@ impl<T: BufferElement> Drop for BufferView<T> {
 pub struct BufferMapping<T: BufferElement> {
     ctx: sys::iree_hal_buffer_mapping_t,
     _buffer: BufferView<T>,
-    element_len: usize,
+    data: BufferMappingData<T>,
+}
+
+enum BufferMappingData<T> {
+    Mapped { element_len: usize },
+    Owned(Vec<T>),
 }
 
 impl<T: BufferElement> BufferMapping<T> {
@@ -900,18 +999,6 @@ impl<T: BufferElement> BufferMapping<T> {
         })
         .to_result()?;
         let mut ctx = unsafe { out.assume_init() };
-        let element_size = core::mem::size_of::<T>();
-        debug_assert_ne!(element_size, 0);
-        if !ctx.contents.data_length.is_multiple_of(element_size) {
-            unsafe {
-                sys::iree_hal_buffer_unmap_range(&mut ctx);
-            }
-            return Err(RuntimeError::InvalidArgument(format!(
-                "mapped byte length {} is not divisible by element size {}",
-                ctx.contents.data_length, element_size
-            )));
-        }
-        let align = core::mem::align_of::<T>();
         let address = ctx.contents.data as usize;
         if ctx.contents.data_length != 0 && address == 0 {
             unsafe {
@@ -921,27 +1008,70 @@ impl<T: BufferElement> BufferMapping<T> {
                 "mapped buffer returned null data for a non-empty range",
             )));
         }
-        if address != 0 && !address.is_multiple_of(align) {
-            unsafe {
-                sys::iree_hal_buffer_unmap_range(&mut ctx);
+        let data = if T::IS_RAW_STORAGE_COMPATIBLE {
+            let element_size = T::element_size();
+            debug_assert_ne!(element_size, 0);
+            if !ctx.contents.data_length.is_multiple_of(element_size) {
+                unsafe {
+                    sys::iree_hal_buffer_unmap_range(&mut ctx);
+                }
+                return Err(RuntimeError::InvalidArgument(format!(
+                    "mapped byte length {} is not divisible by element size {}",
+                    ctx.contents.data_length, element_size
+                )));
             }
-            return Err(RuntimeError::InvalidArgument(format!(
-                "mapped buffer address 0x{address:x} is not aligned to {align}"
-            )));
-        }
-        let element_len = ctx.contents.data_length / element_size;
+            let align = core::mem::align_of::<T>();
+            if address != 0 && !address.is_multiple_of(align) {
+                unsafe {
+                    sys::iree_hal_buffer_unmap_range(&mut ctx);
+                }
+                return Err(RuntimeError::InvalidArgument(format!(
+                    "mapped buffer address 0x{address:x} is not aligned to {align}"
+                )));
+            }
+            BufferMappingData::Mapped {
+                element_len: ctx.contents.data_length / element_size,
+            }
+        } else {
+            let bytes = if ctx.contents.data_length == 0 {
+                &[]
+            } else {
+                unsafe {
+                    core::slice::from_raw_parts(
+                        ctx.contents.data as *const u8,
+                        ctx.contents.data_length,
+                    )
+                }
+            };
+            match T::decode_slice(bytes) {
+                Ok(data) => BufferMappingData::Owned(data),
+                Err(err) => {
+                    unsafe {
+                        sys::iree_hal_buffer_unmap_range(&mut ctx);
+                    }
+                    return Err(err);
+                }
+            }
+        };
         Ok(Self {
             ctx,
             _buffer: buffer,
-            element_len,
+            data,
         })
     }
 
     pub fn data(&self) -> &[T] {
-        if self.element_len == 0 {
-            return &[];
+        match &self.data {
+            BufferMappingData::Mapped { element_len } => {
+                if *element_len == 0 {
+                    return &[];
+                }
+                unsafe {
+                    core::slice::from_raw_parts(self.ctx.contents.data as *const T, *element_len)
+                }
+            }
+            BufferMappingData::Owned(data) => data,
         }
-        unsafe { core::slice::from_raw_parts(self.ctx.contents.data as *const T, self.element_len) }
     }
 }
 

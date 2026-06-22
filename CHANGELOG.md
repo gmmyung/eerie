@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.3 - 2026-06-22
+
+### Added
+
+- Added safe `BufferView<bool>` support for IREE Bool8 tensors, including host buffer creation, writes, reads, read mappings, VM ref extraction, and runtime invocation paths.
+- Added Bool8 validation when reading bool buffer contents so invalid byte values cannot become invalid Rust `bool` values.
+
+### Notes
+
+- Raw-compatible numeric buffer element types keep their existing direct host transfer and zero-copy read mapping paths.
+- `eerie-sys` remains at `0.3.2`; Bool8 constants were already available in the generated raw bindings.
+
 ## 0.4.1 - 2026-06-21
 
 ### Fixed
