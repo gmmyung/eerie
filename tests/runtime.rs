@@ -23,12 +23,12 @@ fn local_sync_device() -> (
 
 #[test]
 fn test_instance() {
-    runtime::vm::Instance::new().unwrap();
+    runtime::vm::Instance::global().unwrap();
 }
 
 #[test]
 fn test_context_with_hal_module() {
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let (_registry, _driver, device) = local_sync_device();
     let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
     runtime::vm::Context::with_modules(&instance, &[&hal_module]).unwrap();
@@ -51,7 +51,7 @@ fn device_metadata() {
 
 #[test]
 fn dynamic_list() {
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let mut list = List::<Value<i32>>::new(4, &instance).unwrap();
     list.push_value(1.to_value()).unwrap();
     list.push_value(2.to_value()).unwrap();
@@ -64,7 +64,7 @@ fn dynamic_list() {
 
 #[test]
 fn ref_list() {
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let (_registry, _driver, device) = local_sync_device();
     let mut list = List::<Undefined>::new(4, &instance).unwrap();
     let buffer = BufferView::<f32>::from_host(
@@ -293,7 +293,7 @@ fn append_module_from_vmvx_fixture() {
 #[test]
 fn function_metadata_and_buffer_view_invoke() {
     let vmfb = include_bytes!("mul_vmvx.vmfb");
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
     let driver = registry.create_driver("local-sync").unwrap();
     let device = driver.create_default_device().unwrap();
@@ -344,38 +344,9 @@ fn function_metadata_and_buffer_view_invoke() {
 }
 
 #[test]
-fn invoke_after_newer_instance_rebinds_hal_types() {
+fn invoke_uses_shared_hal_type_registration() {
     let vmfb = include_bytes!("mul_vmvx.vmfb");
-    let instance = runtime::vm::Instance::new().unwrap();
-    let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
-    let driver = registry.create_driver("local-sync").unwrap();
-    let device = driver.create_default_device().unwrap();
-    let hal_module = runtime::vm::Module::hal(&instance, &device).unwrap();
-    let bytecode_module = runtime::vm::Module::bytecode(&instance, vmfb).unwrap();
-    let context =
-        runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
-    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
-
-    let _newer_instance = runtime::vm::Instance::new().unwrap();
-
-    let input_data = Vec::from_iter((0..100).map(|i| i as f32));
-    let input = BufferView::<f32>::from_host(
-        &device,
-        &[100],
-        Encoding::DenseRowMajor,
-        input_data.as_slice(),
-    )
-    .unwrap();
-    let output = invoke_mul_function(&function, &instance, &device, &input);
-    assert_eq!(output[0], 0.0);
-    assert_eq!(output[7], 49.0);
-    assert_eq!(output[99], 9801.0);
-}
-
-#[test]
-fn invoke_rebinds_prepared_hal_argument_refs() {
-    let vmfb = include_bytes!("mul_vmvx.vmfb");
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
     let driver = registry.create_driver("local-sync").unwrap();
     let device = driver.create_default_device().unwrap();
@@ -401,8 +372,6 @@ fn invoke_rebinds_prepared_hal_argument_refs() {
         .push_ref(&input.to_ref(&instance).unwrap())
         .unwrap();
 
-    let _newer_instance = runtime::vm::Instance::new().unwrap();
-
     let mut output_list = List::<Undefined>::new(1, &instance).unwrap();
     function.invoke(&input_list, &mut output_list).unwrap();
     let output = output_list
@@ -418,7 +387,7 @@ fn invoke_rebinds_prepared_hal_argument_refs() {
 }
 
 #[test]
-fn parallel_instance_invocations_rebind_hal_types() {
+fn parallel_invocations_share_vm_instance() {
     let mut threads = Vec::new();
     for _ in 0..2 {
         threads.push(std::thread::spawn(|| {
@@ -436,7 +405,7 @@ fn parallel_instance_invocations_rebind_hal_types() {
 }
 
 fn run_mul(vmfb: &[u8], driver_name: &str) -> Vec<f32> {
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
     let driver = registry.create_driver(driver_name).unwrap();
     let device = driver.create_default_device().unwrap();
@@ -482,7 +451,7 @@ fn invoke_mul_function(
 }
 
 fn run_bool_not(vmfb: &[u8], driver_name: &str) -> Vec<bool> {
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers().unwrap();
     let driver = registry.create_driver(driver_name).unwrap();
     let device = driver.create_default_device().unwrap();

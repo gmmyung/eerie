@@ -63,7 +63,7 @@ fn load_image_bin(path: PathBuf) -> Vec<f32> {
 #[cfg(all(feature = "compiler", feature = "runtime"))]
 fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
     use eerie::runtime;
-    let instance = runtime::vm::Instance::new().unwrap();
+    let instance = runtime::vm::Instance::global().unwrap();
     let registry = runtime::hal::DriverRegistry::with_available_drivers()
         .expect("failed to create HAL driver registry");
     let hal_driver = std::env::var("EERIE_HAL_DRIVER").unwrap_or_else(|_| "local-task".to_string());

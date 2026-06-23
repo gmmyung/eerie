@@ -66,7 +66,7 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     use eerie::runtime::*;
     use eerie::runtime::vm::ToRef;
 
-    let instance = vm::Instance::new().unwrap();
+    let instance = vm::Instance::global().unwrap();
     let registry = hal::DriverRegistry::with_available_drivers().unwrap();
     let driver = registry.create_driver("local-task").unwrap();
     let device = driver.create_default_device().unwrap();
@@ -102,6 +102,14 @@ The crate is divided into two sections: compiler and runtime. You can enable eac
 
 ### Runtime
 Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
+
+`runtime::vm::Instance::global()` returns a retained handle to the process-wide VM
+instance; it does not create an independent IREE VM instance. IREE expects VM
+instances to be reused across contexts, and HAL type registration uses
+process-global adapter state.
+The root VM instance is retained for the lifetime of the process or embedded
+program. Dropping an `Instance` releases the returned handle, but does not tear
+down the shared runtime root.
 
 Typed tensor-shaped runtime values are represented by `runtime::hal::BufferView<T>`.
 Function calls use VM `List` values directly: convert input buffer views with

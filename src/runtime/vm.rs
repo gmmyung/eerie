@@ -15,7 +15,14 @@ use super::{
 };
 
 #[cfg(feature = "std")]
-static HAL_TYPE_ADAPTER_LOCK: Mutex<()> = Mutex::new(());
+// Owns the root VM instance ref for the program lifetime. HAL type adapters are
+// process-global in IREE, so the root is intentionally not torn down/recreated.
+static GLOBAL_INSTANCE: Mutex<Option<usize>> = Mutex::new(None);
+
+#[cfg(not(feature = "std"))]
+// Owns the root VM instance ref for the program lifetime. HAL type adapters are
+// process-global in IREE, so the root is intentionally not torn down/recreated.
+static mut GLOBAL_INSTANCE: usize = 0;
 
 fn string_view_to_string(value: sys::iree_string_view_t) -> String {
     if value.data.is_null() || value.size == 0 {
@@ -25,6 +32,29 @@ fn string_view_to_string(value: sys::iree_string_view_t) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+fn create_registered_instance() -> Result<*mut sys::iree_vm_instance_t, RuntimeError> {
+    let allocator = base::Allocator::get_global();
+    let mut ctx = core::ptr::null_mut();
+    base::Status::from_raw(unsafe {
+        sys::iree_vm_instance_create(
+            sys::IREE_VM_TYPE_CAPACITY_DEFAULT as usize,
+            allocator.ctx,
+            &mut ctx,
+        )
+    })
+    .to_result()?;
+
+    let status = base::Status::from_raw(unsafe { sys::iree_hal_module_register_all_types(ctx) });
+    if let Err(err) = status.to_result() {
+        unsafe {
+            sys::iree_vm_instance_release(ctx);
+        }
+        return Err(err.into());
+    }
+
+    Ok(ctx)
+}
+
 fn resolve_hal_types(instance: &Instance) -> Result<(), RuntimeError> {
     base::Status::from_raw(unsafe { sys::iree_hal_module_resolve_all_types(instance.ctx) })
         .to_result()
@@ -32,61 +62,29 @@ fn resolve_hal_types(instance: &Instance) -> Result<(), RuntimeError> {
 }
 
 #[cfg(feature = "std")]
-fn with_hal_type_adapter_lock<T>(
-    f: impl FnOnce() -> Result<T, RuntimeError>,
-) -> Result<T, RuntimeError> {
-    let _guard = HAL_TYPE_ADAPTER_LOCK.lock().unwrap();
-    f()
+fn global_instance() -> Result<Instance, RuntimeError> {
+    let mut global = GLOBAL_INSTANCE.lock().unwrap();
+    let ctx = match *global {
+        Some(ctx) => ctx as *mut sys::iree_vm_instance_t,
+        None => {
+            let ctx = create_registered_instance()?;
+            *global = Some(ctx as usize);
+            ctx
+        }
+    };
+    Ok(Instance::retain_raw(ctx))
 }
 
 #[cfg(not(feature = "std"))]
-fn with_hal_type_adapter_lock<T>(
-    f: impl FnOnce() -> Result<T, RuntimeError>,
-) -> Result<T, RuntimeError> {
-    critical_section::with(|_| f())
-}
-
-fn with_hal_type_adapters<T>(
-    instance: &Instance,
-    f: impl FnOnce() -> Result<T, RuntimeError>,
-) -> Result<T, RuntimeError> {
-    with_hal_type_adapter_lock(|| {
-        resolve_hal_types(instance)?;
-        f()
+fn global_instance() -> Result<Instance, RuntimeError> {
+    critical_section::with(|_| unsafe {
+        if GLOBAL_INSTANCE == 0 {
+            GLOBAL_INSTANCE = create_registered_instance()? as usize;
+        }
+        Ok(Instance::retain_raw(
+            GLOBAL_INSTANCE as *mut sys::iree_vm_instance_t,
+        ))
     })
-}
-
-fn rebind_hal_refs<T: Type>(instance: &Instance, list: &List<T>) -> Result<(), RuntimeError> {
-    let count = unsafe { sys::iree_vm_list_size(list.ctx) };
-    for index in 0..count {
-        let mut value = sys::iree_vm_ref_t::default();
-        let status = base::Status::from_raw(unsafe {
-            sys::iree_vm_list_get_ref_assign(list.ctx, index, &mut value)
-        });
-        if status.to_result().is_err()
-            || value.type_
-                == sys::iree_vm_ref_type_bits_t_IREE_VM_REF_TYPE_NULL as sys::iree_vm_ref_type_t
-        {
-            continue;
-        }
-
-        let type_name = string_view_to_string(unsafe { sys::iree_vm_ref_type_name(value.type_) });
-        if !type_name.starts_with("hal.") {
-            continue;
-        }
-
-        let rebound_type = instance.lookup_type(&type_name);
-        if rebound_type == 0 || rebound_type == value.type_ {
-            continue;
-        }
-
-        value.type_ = rebound_type;
-        base::Status::from_raw(unsafe {
-            sys::iree_vm_list_set_ref_retain(list.ctx, index, &value)
-        })
-        .to_result()?;
-    }
-    Ok(())
 }
 
 /// A VM instance owns registered VM ref types and VM-level host allocation.
@@ -95,24 +93,26 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new() -> Result<Self, RuntimeError> {
-        let allocator = base::Allocator::get_global();
-        let mut ctx = core::ptr::null_mut();
-        base::Status::from_raw(unsafe {
-            sys::iree_vm_instance_create(
-                sys::IREE_VM_TYPE_CAPACITY_DEFAULT as usize,
-                allocator.ctx,
-                &mut ctx,
-            )
-        })
-        .to_result()?;
-        let instance = Self { ctx };
-        with_hal_type_adapter_lock(|| {
-            base::Status::from_raw(unsafe { sys::iree_hal_module_register_all_types(ctx) })
-                .to_result()?;
-            resolve_hal_types(&instance)
-        })?;
-        Ok(instance)
+    /// Returns a retained handle to the process-wide VM instance.
+    ///
+    /// This does not create an independent IREE VM instance.
+    /// IREE expects hosting applications to share VM instances across contexts.
+    /// HAL type registration uses process-global adapter slots, so the safe
+    /// runtime API exposes one shared instance instead of creating independent
+    /// HAL-registered instances.
+    ///
+    /// The root VM instance is retained for the lifetime of the process or
+    /// embedded program. Dropping an `Instance` releases the returned handle,
+    /// but does not tear down the shared runtime root.
+    pub fn global() -> Result<Self, RuntimeError> {
+        global_instance()
+    }
+
+    fn retain_raw(ctx: *mut sys::iree_vm_instance_t) -> Self {
+        unsafe {
+            sys::iree_vm_instance_retain(ctx);
+        }
+        Self { ctx }
     }
 
     pub(crate) fn allocator(&self) -> base::Allocator {
@@ -128,10 +128,7 @@ impl Instance {
 
 impl Clone for Instance {
     fn clone(&self) -> Self {
-        unsafe {
-            sys::iree_vm_instance_retain(self.ctx);
-        }
-        Self { ctx: self.ctx }
+        Self::retain_raw(self.ctx)
     }
 }
 
@@ -153,37 +150,35 @@ pub struct Module {
 impl Module {
     /// Creates the IREE HAL VM module bound to `device`.
     pub fn hal(instance: &Instance, device: &Device) -> Result<Self, RuntimeError> {
-        with_hal_type_adapters(instance, || {
-            let mut ctx = core::ptr::null_mut();
-            let mut device_group = core::ptr::null_mut();
-            base::Status::from_raw(unsafe {
-                sys::iree_hal_device_group_create_from_device(
-                    device.ctx,
-                    instance.allocator().ctx,
-                    &mut device_group,
-                )
-            })
-            .to_result()?;
-            let status = base::Status::from_raw(unsafe {
-                sys::iree_hal_module_create(
-                    instance.ctx,
-                    sys::iree_hal_module_device_policy_default(),
-                    device_group,
-                    sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
-                    sys::iree_hal_module_debug_sink_null(),
-                    instance.allocator().ctx,
-                    &mut ctx,
-                )
-            });
-            unsafe {
-                sys::iree_hal_device_group_release(device_group);
-            }
-            status.to_result()?;
-            Ok(Self {
-                ctx,
-                instance: instance.clone(),
-                archive: None,
-            })
+        let mut ctx = core::ptr::null_mut();
+        let mut device_group = core::ptr::null_mut();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_device_group_create_from_device(
+                device.ctx,
+                instance.allocator().ctx,
+                &mut device_group,
+            )
+        })
+        .to_result()?;
+        let status = base::Status::from_raw(unsafe {
+            sys::iree_hal_module_create(
+                instance.ctx,
+                sys::iree_hal_module_device_policy_default(),
+                device_group,
+                sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
+                sys::iree_hal_module_debug_sink_null(),
+                instance.allocator().ctx,
+                &mut ctx,
+            )
+        });
+        unsafe {
+            sys::iree_hal_device_group_release(device_group);
+        }
+        status.to_result()?;
+        Ok(Self {
+            ctx,
+            instance: instance.clone(),
+            archive: None,
         })
     }
 
@@ -522,23 +517,21 @@ impl Function {
         I: Type,
         O: Type,
     {
-        with_hal_type_adapters(&self.context.instance, || {
-            rebind_hal_refs(&self.context.instance, inputs)?;
-            base::Status::from_raw(unsafe {
-                trace!("iree_vm_invoke");
-                sys::iree_vm_invoke(
-                    self.context.ctx,
-                    self.ctx,
-                    sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
-                    core::ptr::null(),
-                    inputs.ctx,
-                    outputs.ctx,
-                    self.context.instance.allocator().ctx,
-                )
-            })
-            .to_result()
-            .map_err(Into::into)
+        resolve_hal_types(&self.context.instance)?;
+        base::Status::from_raw(unsafe {
+            trace!("iree_vm_invoke");
+            sys::iree_vm_invoke(
+                self.context.ctx,
+                self.ctx,
+                sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
+                core::ptr::null(),
+                inputs.ctx,
+                outputs.ctx,
+                self.context.instance.allocator().ctx,
+            )
         })
+        .to_result()
+        .map_err(Into::into)
     }
 }
 
