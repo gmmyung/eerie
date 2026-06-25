@@ -1,6 +1,7 @@
 #![cfg(feature = "runtime")]
 
 use eerie::runtime::{BufferView, Driver, Runtime, RuntimeError, Value};
+#[cfg(feature = "half")]
 use half::f16;
 use test_log::test;
 
@@ -34,6 +35,7 @@ fn buffer_shape_mismatch_is_rejected() {
     assert!(matches!(err, RuntimeError::InvalidArgument(_)));
 }
 
+#[cfg(feature = "half")]
 #[test]
 fn fp16_buffer_roundtrip() {
     let runtime = Runtime::new(Driver::LocalSync).unwrap();

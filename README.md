@@ -96,7 +96,8 @@ input buffers through `Runtime::buffer_view`, resolve functions through
 `Program::function`, invoke with `Function::invoke`, convert returned `Value`s
 into typed `BufferView<T>` handles, and read outputs with `BufferView::read`.
 Supported `BufferView<T>` element types are `bool` (IREE Bool8), signed and
-unsigned 8/16/32/64-bit integers, `f16`, `bf16`, `f32`, and `f64`.
+unsigned 8/16/32/64-bit integers, `f32`, and `f64`. The `half` feature adds
+`f16` and `bf16` support through the optional `half` crate dependency.
 
 Runtime driver selection uses `runtime::Driver`, not raw driver strings.
 `Driver::LocalSync` is always available. `Driver::LocalTask` is available with
