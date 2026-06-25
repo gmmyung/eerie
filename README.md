@@ -12,7 +12,7 @@ Rust has a few ML frameworks such as [Candle](https://github.com/huggingface/can
 Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so this can be used to deploy ML models in embedded rust in the future.
 
 ### Supported OS
-- [x] MacOS
+- [x] macOS
 - [x] Linux
 - [ ] Windows
 - [x] Bare-Metal (thumb, rv32)
@@ -73,7 +73,7 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
 
     let function = program.function("arithmetic.simple_mul").unwrap();
     let outputs = function.invoke([&lhs, &rhs]).unwrap();
-    let output: BufferView<f32> = outputs.into_iter().next().unwrap().try_into().unwrap();
+    let output: BufferView<f32> = outputs[0].clone().try_into().unwrap();
     output.read().unwrap()
 }
 ```
@@ -125,8 +125,8 @@ is the supported GPU path on macOS/Apple Silicon. `cuda` is enabled with the
 non-macOS targets with a usable Vulkan loader/device; macOS Vulkan is not
 supported by eerie.
 
-#### MacOS
-Install XCode and MacOS SDKs.
+#### macOS
+Install Xcode and macOS SDKs.
 
 #### No-std
 The runtime library can be compiled without the default `std` feature for bare-metal targets. This requires a C/C++ embedded toolchain (`arm-none-eabi-gcc`/`riscv64-unknown-elf-gcc`) and a Rust target with `alloc` support. The embedded runtime path uses Rust `compiler_builtins`, `libm`, `tinyrlibc`, and a small `critical-section` backed synchronization shim instead of linking `libc`, `libm`, `nosys`, or pthreads.
@@ -148,9 +148,9 @@ In order to export the installed library location, run this script:
 python -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')"
 ```
 
-Then, set the rpath and envorinment variable accordingly. This can be done by adding the following `.cargo/config.toml` to your project directory.
+Then, set the rpath and environment variable accordingly. This can be done by adding the following `.cargo/config.toml` to your project directory.
  
-MacOS
+macOS
 ```toml
 [build]
 rustflags = ["-C", "link-arg=-Wl,-rpath,/path/to/library/"]
@@ -175,8 +175,10 @@ cargo test --features compiler,runtime,std
 cargo check --no-default-features --features runtime
 ```
 
-`cargo test --all-features` also enables the `cuda` feature and requires a CUDA
-toolkit configured for IREE's CMake build.
+Do not use `cargo test --all-features` as a portable release check. It enables
+optional backend features such as `cuda` and `vulkan`; CUDA requires a CUDA
+toolkit configured for IREE's CMake build, and Vulkan is intentionally
+unsupported on macOS.
 
 ## References
 - Also look at [SamKG/iree-rs](https://github.com/SamKG/iree-rs/tree/main)

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `runtime::DeviceSpec`, `runtime::Driver`, and `runtime::DeviceInfo` for explicit runtime device selection and device queries.
+- Added optional runtime `f16` and `bf16` buffer view support behind the `half` feature.
+
+### Changed
+
+- Reworked the safe runtime surface around `Runtime -> Program -> Function` so users load VMFB modules, resolve functions, pass typed `BufferView<T>` inputs, and receive dynamically typed `Value` outputs.
+- Moved low-level VM/HAL assembly APIs behind the crate-private runtime implementation; public runtime usage now goes through the safe high-level API.
+- Use a retained process-global VM instance for hosted runtime setup to avoid concurrent HAL type registration hazards in IREE's low-level initialization path.
+- Treat macOS Vulkan as unsupported in eerie; use the Metal backend on macOS.
+
 ## 0.4.3 - 2026-06-22
 
 ### Added
