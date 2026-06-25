@@ -7,48 +7,32 @@ fn target_backend() -> String {
 }
 
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-fn parse_runtime_driver(name: &str) -> eerie::runtime::Driver {
-    use eerie::runtime::Driver;
+fn parse_device_spec(name: &str) -> eerie::runtime::DeviceSpec {
+    use eerie::runtime::DeviceSpec;
 
     match name {
-        "local-sync" => Driver::LocalSync,
-        "local-task" => Driver::LocalTask,
-        "metal" => {
-            #[cfg(target_os = "macos")]
-            {
-                Driver::Metal
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                panic!("EERIE_HAL_DRIVER=metal requires macOS")
-            }
-        }
-        "cuda" => {
-            #[cfg(feature = "cuda")]
-            {
-                Driver::Cuda
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                panic!("EERIE_HAL_DRIVER=cuda requires the cuda feature")
-            }
-        }
+        "local-sync" => DeviceSpec::local_sync(),
+        "local-task" => DeviceSpec::local_task(),
+        "metal" => DeviceSpec::metal(),
+        "vulkan" => DeviceSpec::vulkan(),
+        "cuda" => DeviceSpec::cuda(),
         other => panic!(
-            "unsupported EERIE_HAL_DRIVER={other}; expected local-sync, local-task, metal, or cuda"
+            "unsupported EERIE_HAL_DRIVER={other}; expected local-sync, local-task, metal, vulkan, or cuda"
         ),
     }
 }
 
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-fn runtime_driver_for_backend(target_backend: &str) -> eerie::runtime::Driver {
+fn device_spec_for_backend(target_backend: &str) -> eerie::runtime::DeviceSpec {
     if let Ok(driver) = std::env::var("EERIE_HAL_DRIVER") {
-        return parse_runtime_driver(&driver);
+        return parse_device_spec(&driver);
     }
 
     match target_backend {
-        "llvm-cpu" | "vmvx" => parse_runtime_driver("local-task"),
-        "metal-spirv" => parse_runtime_driver("metal"),
-        "cuda" => parse_runtime_driver("cuda"),
+        "llvm-cpu" | "vmvx" => parse_device_spec("local-task"),
+        "metal-spirv" => parse_device_spec("metal"),
+        "vulkan-spirv" => parse_device_spec("vulkan"),
+        "cuda" => parse_device_spec("cuda"),
         other => panic!(
             "cannot infer runtime driver for EERIE_HAL_TARGET_BACKEND={other}; set EERIE_HAL_DRIVER"
         ),
@@ -111,11 +95,11 @@ fn load_image_bin(path: PathBuf) -> Vec<f32> {
     image_bin
 }
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-fn run(vmfb: &[u8], image_bin: &[f32], driver: eerie::runtime::Driver) -> Vec<f32> {
+fn run(vmfb: &[u8], image_bin: &[f32], spec: eerie::runtime::DeviceSpec) -> Vec<f32> {
     use eerie::runtime::{BufferView, Runtime};
 
     let runtime =
-        Runtime::new(driver).unwrap_or_else(|err| panic!("failed to create runtime: {err:?}"));
+        Runtime::new(spec).unwrap_or_else(|err| panic!("failed to create runtime: {err:?}"));
     let program = runtime.load_vmfb(vmfb).expect("failed to load VMFB");
     let input = runtime
         .buffer_view(&[1, 3, 224, 224], image_bin)
@@ -142,7 +126,7 @@ fn main() {
     let mlir_bytecode =
         std::fs::read("examples/resnet50.mlir").expect("missing examples/resnet50.mlir");
     let target_backend = target_backend();
-    let runtime_driver = runtime_driver_for_backend(&target_backend);
+    let spec = device_spec_for_backend(&target_backend);
     let compiled_bytecode = compile_mlir(&mlir_bytecode, &target_backend);
 
     println!("Compiled in {} ms", start.elapsed().as_millis());
@@ -150,7 +134,7 @@ fn main() {
     // timer for run
     let start = std::time::Instant::now();
     let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
-    let output = run(&compiled_bytecode, &image_bin, runtime_driver);
+    let output = run(&compiled_bytecode, &image_bin, spec);
     println!("Run in {} ms", start.elapsed().as_millis());
     let max_idx = output
         .iter()

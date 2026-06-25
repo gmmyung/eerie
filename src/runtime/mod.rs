@@ -6,4 +6,4 @@ mod vm;
 
 pub use error::{RuntimeError, StatusError};
 pub use hal::{BufferElement, BufferView, Value};
-pub use high_level::{Driver, Function, Program, Runtime};
+pub use high_level::{DeviceInfo, DeviceSpec, Driver, Function, Program, Runtime};

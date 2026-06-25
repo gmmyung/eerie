@@ -240,6 +240,8 @@ fn main() {
 
         #[cfg(feature = "cuda")]
         cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
+        #[cfg(feature = "vulkan")]
+        cmake_defs.push(("IREE_HAL_DRIVER_VULKAN", "ON"));
 
         let mut cflags = vec![];
 
