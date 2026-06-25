@@ -63,9 +63,9 @@ Running a buffer view operation in an IREE runtime environment
 ```rust
 #[cfg(feature = "runtime")]
 fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
-    use eerie::runtime::{BufferView, Driver, Runtime};
+    use eerie::runtime::{BufferView, DeviceSpec, Runtime};
 
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let program = runtime.load_vmfb(vmfb).unwrap();
 
     let lhs = runtime.buffer_view(&[4], &[1.0, 2.0, 3.0, 4.0]).unwrap();
@@ -99,10 +99,31 @@ Supported `BufferView<T>` element types are `bool` (IREE Bool8), signed and
 unsigned 8/16/32/64-bit integers, `f32`, and `f64`. The `half` feature adds
 `f16` and `bf16` support through the optional `half` crate dependency.
 
-Runtime driver selection uses `runtime::Driver`, not raw driver strings.
-`Driver::LocalSync` is always available. `Driver::LocalTask` is available with
-`std`, `Driver::Metal` is available on macOS with `std`, and `Driver::Cuda` is
-available with `std` and the `cuda` feature.
+Runtime device selection uses `runtime::DeviceSpec`. Common constructors cover
+the built-in drivers:
+
+```rust,no_run
+use eerie::runtime::{DeviceSpec, Runtime, RuntimeError};
+
+fn create_runtimes() -> Result<(), RuntimeError> {
+    Runtime::new(DeviceSpec::local_sync())?;
+    Runtime::new(DeviceSpec::local_task())?;
+    Runtime::new(DeviceSpec::metal())?;
+    Runtime::new(DeviceSpec::vulkan().ordinal(0))?;
+    Ok(())
+}
+```
+
+`Runtime::available_devices(driver)` queries devices reported by a linked HAL
+driver, and `DeviceInfo::spec()` converts a query result back into a
+`DeviceSpec`. `DeviceSpec::custom(...)` and `Driver::custom(...)` are available
+for downstream IREE drivers without adding new Rust enum variants.
+
+`local-sync` is always available. `local-task` is available with `std`. `metal`
+is the supported GPU path on macOS/Apple Silicon. `cuda` is enabled with the
+`cuda` feature. `vulkan` can be requested with the `vulkan` feature on
+non-macOS targets with a usable Vulkan loader/device; macOS Vulkan is not
+supported by eerie.
 
 #### MacOS
 Install XCode and MacOS SDKs.

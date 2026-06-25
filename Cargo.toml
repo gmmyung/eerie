@@ -51,6 +51,7 @@ compiler = ["eerie-sys/compiler", "std"]
 std = ["dep:thiserror", "eerie-sys/std"]
 half = ["dep:half"]
 cuda = ["eerie-sys/cuda"]
+vulkan = ["eerie-sys/vulkan"]
 
 [[example]]
 name = "resnet"

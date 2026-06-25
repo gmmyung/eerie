@@ -1,13 +1,13 @@
 #![cfg(feature = "runtime")]
 
-use eerie::runtime::{BufferView, Driver, Runtime, RuntimeError, Value};
+use eerie::runtime::{BufferView, DeviceSpec, Driver, Runtime, RuntimeError, Value};
 #[cfg(feature = "half")]
 use half::f16;
 use test_log::test;
 
 #[test]
 fn buffer_view_metadata_and_readback() {
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let buffer = runtime
         .buffer_view(&[2, 2], &[1.0_f32, 2.0, 3.0, 4.0])
         .unwrap();
@@ -18,7 +18,7 @@ fn buffer_view_metadata_and_readback() {
 
 #[test]
 fn scalar_buffer_view_has_empty_shape() {
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let buffer = runtime.buffer_view(&[], &[42.0_f32]).unwrap();
 
     assert_eq!(buffer.shape(), Vec::<usize>::new());
@@ -27,7 +27,7 @@ fn scalar_buffer_view_has_empty_shape() {
 
 #[test]
 fn buffer_shape_mismatch_is_rejected() {
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let err = runtime
         .buffer_view(&[2, 3], &[1.0_f32, 2.0, 3.0, 4.0])
         .unwrap_err();
@@ -38,7 +38,7 @@ fn buffer_shape_mismatch_is_rejected() {
 #[cfg(feature = "half")]
 #[test]
 fn fp16_buffer_roundtrip() {
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let input = [
         f16::from_f32(1.0),
         f16::from_f32(2.0),
@@ -52,7 +52,7 @@ fn fp16_buffer_roundtrip() {
 
 #[test]
 fn bool_buffer_roundtrip() {
-    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
     let buffer = runtime
         .buffer_view(&[2, 2], &[true, false, true, false])
         .unwrap();
@@ -61,8 +61,20 @@ fn bool_buffer_roundtrip() {
 }
 
 #[test]
+fn available_devices_can_create_runtime() {
+    let devices = Runtime::available_devices(Driver::local_sync()).unwrap();
+    assert!(!devices.is_empty());
+    assert_eq!(devices[0].driver().as_str(), "local-sync");
+    assert_eq!(devices[0].name(), "default");
+
+    let runtime = Runtime::new(devices[0].spec()).unwrap();
+    let buffer = runtime.buffer_view(&[2], &[1.0_f32, 2.0]).unwrap();
+    assert_eq!(buffer.read().unwrap(), vec![1.0, 2.0]);
+}
+
+#[test]
 fn fixture_vmfb_invokes_buffer_views() {
-    let output = run_mul(include_bytes!("mul_vmvx.vmfb"), Driver::LocalSync);
+    let output = run_mul(include_bytes!("mul_vmvx.vmfb"), DeviceSpec::local_sync());
     assert_eq!(output[0], 0.0);
     assert_eq!(output[7], 49.0);
     assert_eq!(output[99], 9801.0);
@@ -86,7 +98,7 @@ fn parallel_program_invocations() {
         let vmfb = vmfb.clone();
         let barrier = barrier.clone();
         threads.push(std::thread::spawn(move || {
-            let runtime = Runtime::new(Driver::LocalSync).unwrap();
+            let runtime = Runtime::new(DeviceSpec::local_sync()).unwrap();
             let program = runtime.load_vmfb(&vmfb).unwrap();
             let function = program.function("arithmetic.simple_mul").unwrap();
             let input_data = Vec::from_iter((0..100).map(|i| i as f32));
@@ -129,7 +141,7 @@ fn parallel_runtime_stack_churn() {
         threads.push(std::thread::spawn(move || {
             barrier.wait();
             for _ in 0..iterations {
-                let output = run_mul(&vmfb, Driver::LocalSync);
+                let output = run_mul(&vmfb, DeviceSpec::local_sync());
                 assert_eq!(output[0], 0.0);
                 assert_eq!(output[7], 49.0);
                 assert_eq!(output[99], 9801.0);
@@ -142,8 +154,8 @@ fn parallel_runtime_stack_churn() {
     }
 }
 
-fn run_mul(vmfb: &[u8], driver: Driver) -> Vec<f32> {
-    let runtime = Runtime::new(driver).unwrap();
+fn run_mul(vmfb: &[u8], spec: DeviceSpec) -> Vec<f32> {
+    let runtime = Runtime::new(spec).unwrap();
     let program = runtime.load_vmfb(vmfb).unwrap();
     let input_data = Vec::from_iter((0..100).map(|i| i as f32));
     let lhs = runtime.buffer_view(&[100], input_data.as_slice()).unwrap();
@@ -154,7 +166,7 @@ fn run_mul(vmfb: &[u8], driver: Driver) -> Vec<f32> {
 }
 
 #[cfg(feature = "compiler")]
-fn run_bool_not(vmfb: &[u8], driver: Driver) -> Vec<bool> {
+fn run_bool_not(vmfb: &[u8], driver: DeviceSpec) -> Vec<bool> {
     let runtime = Runtime::new(driver).unwrap();
     let program = runtime.load_vmfb(vmfb).unwrap();
     let input = runtime
@@ -166,7 +178,7 @@ fn run_bool_not(vmfb: &[u8], driver: Driver) -> Vec<bool> {
 }
 
 #[cfg(feature = "compiler")]
-fn run_is_positive(vmfb: &[u8], driver: Driver) -> Vec<bool> {
+fn run_is_positive(vmfb: &[u8], driver: DeviceSpec) -> Vec<bool> {
     let runtime = Runtime::new(driver).unwrap();
     let program = runtime.load_vmfb(vmfb).unwrap();
     let input = runtime
@@ -178,7 +190,7 @@ fn run_is_positive(vmfb: &[u8], driver: Driver) -> Vec<bool> {
 }
 
 #[cfg(feature = "compiler")]
-fn run_select_masked(vmfb: &[u8], driver: Driver) -> Vec<f32> {
+fn run_select_masked(vmfb: &[u8], driver: DeviceSpec) -> Vec<f32> {
     let runtime = Runtime::new(driver).unwrap();
     let program = runtime.load_vmfb(vmfb).unwrap();
     let values = runtime
@@ -208,7 +220,7 @@ where
 #[cfg(feature = "compiler")]
 mod integration_tests {
     use eerie::compiler;
-    use eerie::runtime::Driver;
+    use eerie::runtime::DeviceSpec;
     use log::info;
     use std::path::Path;
     use std::sync::Mutex;
@@ -265,7 +277,7 @@ mod integration_tests {
     #[test]
     fn append_module() {
         let vmfb = compile_mul("llvm-cpu");
-        let output = run_mul(&vmfb, Driver::LocalSync);
+        let output = run_mul(&vmfb, DeviceSpec::local_sync());
         info!("Output: {:?}", output);
         assert_eq!(output[0], 0.0);
         assert_eq!(output[7], 49.0);
@@ -275,21 +287,21 @@ mod integration_tests {
     #[test]
     fn bool_buffer_view_invoke() {
         let vmfb = compile_bool_not("llvm-cpu");
-        let output = run_bool_not(&vmfb, Driver::LocalSync);
+        let output = run_bool_not(&vmfb, DeviceSpec::local_sync());
         assert_eq!(output, vec![false, true, true, false]);
     }
 
     #[test]
     fn mixed_dtype_invoke() {
         let vmfb = compile_mixed("llvm-cpu");
-        let output = run_is_positive(&vmfb, Driver::LocalSync);
+        let output = run_is_positive(&vmfb, DeviceSpec::local_sync());
         assert_eq!(output, vec![false, false, true, true]);
     }
 
     #[test]
     fn mixed_input_dtype_invoke() {
         let vmfb = compile_mixed("llvm-cpu");
-        let output = run_select_masked(&vmfb, Driver::LocalSync);
+        let output = run_select_masked(&vmfb, DeviceSpec::local_sync());
         assert_eq!(output, vec![1.0, 0.0, 3.0, 0.0]);
     }
 
@@ -302,7 +314,7 @@ mod integration_tests {
         #[cfg(target_os = "macos")]
         {
             let vmfb = compile_mul("metal-spirv");
-            let output = run_mul(&vmfb, Driver::Metal);
+            let output = run_mul(&vmfb, DeviceSpec::metal());
             assert_eq!(output[0], 0.0);
             assert_eq!(output[7], 49.0);
             assert_eq!(output[99], 9801.0);

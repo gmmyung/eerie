@@ -162,6 +162,9 @@ fn main() {
         if bare_metal && cfg!(feature = "std") {
             panic!("The std feature cannot be used for target_os = \"none\"");
         }
+        if target_os == "macos" && cfg!(feature = "vulkan") {
+            panic!("The vulkan feature is not supported on macOS. Use the metal backend instead.");
+        }
         let build_path =
             out_path
                 .join("runtime_build")
@@ -240,6 +243,8 @@ fn main() {
 
         #[cfg(feature = "cuda")]
         cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
+        #[cfg(feature = "vulkan")]
+        cmake_defs.push(("IREE_HAL_DRIVER_VULKAN", "ON"));
 
         let mut cflags = vec![];
 

@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, format, vec::Vec};
+use alloc::{borrow::Cow, format, string::String, vec::Vec};
 use core::{
     fmt::{Debug, Formatter},
     marker::PhantomData,
@@ -38,6 +38,20 @@ fn infinite_timeout() -> sys::iree_timeout_t {
         type_: sys::iree_timeout_type_e_IREE_TIMEOUT_ABSOLUTE,
         nanos: i64::MAX as sys::iree_time_t,
     }
+}
+
+fn string_view_to_string(view: sys::iree_string_view_t) -> String {
+    if view.data.is_null() || view.size == 0 {
+        return String::new();
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(view.data as *const u8, view.size) };
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+pub(crate) struct DeviceInfo {
+    pub(crate) ordinal: usize,
+    pub(crate) path: String,
+    pub(crate) name: String,
 }
 
 /// A HAL driver registry populated with the drivers linked into this binary.
@@ -115,6 +129,90 @@ impl Driver {
             ctx,
             _not_send_sync: base::not_send_sync(),
         })
+    }
+
+    pub(crate) fn create_device_by_ordinal(&self, ordinal: usize) -> Result<Device, RuntimeError> {
+        let _guard = base::runtime_lifecycle_guard();
+        let mut ctx = core::ptr::null_mut();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_driver_create_device_by_ordinal(
+                self.ctx,
+                ordinal,
+                0,
+                core::ptr::null(),
+                self.host_allocator.ctx,
+                &mut ctx,
+            )
+        })
+        .into_result()?;
+        Ok(Device {
+            ctx,
+            _not_send_sync: base::not_send_sync(),
+        })
+    }
+
+    pub(crate) fn create_device_by_path(
+        &self,
+        driver_name: &str,
+        path: &str,
+    ) -> Result<Device, RuntimeError> {
+        let _guard = base::runtime_lifecycle_guard();
+        let mut ctx = core::ptr::null_mut();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_driver_create_device_by_path(
+                self.ctx,
+                StringView::from(driver_name).ctx,
+                StringView::from(path).ctx,
+                0,
+                core::ptr::null(),
+                self.host_allocator.ctx,
+                &mut ctx,
+            )
+        })
+        .into_result()?;
+        Ok(Device {
+            ctx,
+            _not_send_sync: base::not_send_sync(),
+        })
+    }
+
+    pub(crate) fn available_devices(&self) -> Result<Vec<DeviceInfo>, RuntimeError> {
+        let _guard = base::runtime_lifecycle_guard();
+        let mut count = 0;
+        let mut infos = core::ptr::null_mut();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_driver_query_available_devices(
+                self.ctx,
+                self.host_allocator.ctx,
+                &mut count,
+                &mut infos,
+            )
+        })
+        .into_result()?;
+
+        if count == 0 {
+            if !infos.is_null() {
+                unsafe {
+                    sys::iree_allocator_free(self.host_allocator.ctx, infos as *mut _);
+                }
+            }
+            return Ok(Vec::new());
+        }
+
+        let infos_slice = unsafe { core::slice::from_raw_parts(infos, count) };
+        let devices = infos_slice
+            .iter()
+            .enumerate()
+            .map(|(ordinal, info)| DeviceInfo {
+                ordinal,
+                path: string_view_to_string(info.path),
+                name: string_view_to_string(info.name),
+            })
+            .collect();
+        unsafe {
+            sys::iree_allocator_free(self.host_allocator.ctx, infos as *mut _);
+        }
+        Ok(devices)
     }
 }
 
