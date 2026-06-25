@@ -63,36 +63,18 @@ Running a buffer view operation in an IREE runtime environment
 ```rust
 #[cfg(feature = "runtime")]
 fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
-    use eerie::runtime::*;
-    use eerie::runtime::vm::ToRef;
+    use eerie::runtime::{BufferView, Driver, Runtime};
 
-    let instance = vm::Instance::new().unwrap();
-    let registry = hal::DriverRegistry::with_available_drivers().unwrap();
-    let driver = registry.create_driver("local-task").unwrap();
-    let device = driver.create_default_device().unwrap();
-    let hal_module = vm::Module::hal(&instance, &device).unwrap();
-    let bytecode_module = vm::Module::bytecode(&instance, vmfb).unwrap();
-    let context = vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module]).unwrap();
-    let function = context.resolve_function("arithmetic.simple_mul").unwrap();
+    let runtime = Runtime::new(Driver::LocalSync).unwrap();
+    let program = runtime.load_vmfb(vmfb).unwrap();
 
-    let input = hal::BufferView::<f32>::from_host(
-        &device,
-        &[4],
-        hal::Encoding::DenseRowMajor,
-        &[1.0, 2.0, 3.0, 4.0]
-    ).unwrap();
-    let mut inputs = vm::List::<vm::Undefined>::new(2, &instance).unwrap();
-    inputs.push_ref(&input.to_ref(&instance).unwrap()).unwrap();
-    inputs.push_ref(&input.to_ref(&instance).unwrap()).unwrap();
-    let mut outputs = vm::List::<vm::Undefined>::new(1, &instance).unwrap();
-    function.invoke(&inputs, &mut outputs).unwrap();
-    outputs
-        .get_ref::<hal::BufferView<f32>>(0)
-        .unwrap()
-        .to_buffer_view()
-        .unwrap()
-        .read_to_vec(&device)
-        .unwrap()
+    let lhs = runtime.buffer_view(&[4], &[1.0, 2.0, 3.0, 4.0]).unwrap();
+    let rhs = runtime.buffer_view(&[4], &[4.0, 3.0, 2.0, 1.0]).unwrap();
+
+    let function = program.function("arithmetic.simple_mul").unwrap();
+    let outputs = function.invoke([&lhs, &rhs]).unwrap();
+    let output: BufferView<f32> = outputs.into_iter().next().unwrap().try_into().unwrap();
+    output.read().unwrap()
 }
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
@@ -103,12 +85,23 @@ The crate is divided into two sections: compiler and runtime. You can enable eac
 ### Runtime
 Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
 
-Typed tensor-shaped runtime values are represented by `runtime::hal::BufferView<T>`.
-Function calls use VM `List` values directly: convert input buffer views with
-`ToRef`, call `runtime::vm::Function::invoke`, then extract output
-`Ref<BufferView<T>>` values from the output list.
+The runtime API is `runtime::Runtime -> Program -> Function`. It creates the
+shared VM instance, HAL device, modules, and VM context for you and serializes
+VM/HAL lifecycle setup around IREE's low-level initialization path. The shared
+VM instance root is retained for the lifetime of the process or embedded
+program because IREE HAL type registration uses process-global adapter state.
+Typed tensor-shaped runtime values are represented by `runtime::BufferView<T>`.
+The low-level VM/HAL assembly APIs are intentionally crate-private; users create
+input buffers through `Runtime::buffer_view`, resolve functions through
+`Program::function`, invoke with `Function::invoke`, convert returned `Value`s
+into typed `BufferView<T>` handles, and read outputs with `BufferView::read`.
 Supported `BufferView<T>` element types are `bool` (IREE Bool8), signed and
 unsigned 8/16/32/64-bit integers, `f16`, `bf16`, `f32`, and `f64`.
+
+Runtime driver selection uses `runtime::Driver`, not raw driver strings.
+`Driver::LocalSync` is always available. `Driver::LocalTask` is available with
+`std`, `Driver::Metal` is available on macOS with `std`, and `Driver::Cuda` is
+available with `std` and the `cuda` feature.
 
 #### MacOS
 Install XCode and MacOS SDKs.

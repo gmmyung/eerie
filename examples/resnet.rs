@@ -2,12 +2,62 @@
 use std::{path::PathBuf, str::FromStr};
 
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-use eerie::runtime::vm::ToRef;
+fn target_backend() -> String {
+    std::env::var("EERIE_HAL_TARGET_BACKEND").unwrap_or_else(|_| "llvm-cpu".to_string())
+}
+
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-fn compile_mlir(data: &[u8]) -> Vec<u8> {
+fn parse_runtime_driver(name: &str) -> eerie::runtime::Driver {
+    use eerie::runtime::Driver;
+
+    match name {
+        "local-sync" => Driver::LocalSync,
+        "local-task" => Driver::LocalTask,
+        "metal" => {
+            #[cfg(target_os = "macos")]
+            {
+                Driver::Metal
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                panic!("EERIE_HAL_DRIVER=metal requires macOS")
+            }
+        }
+        "cuda" => {
+            #[cfg(feature = "cuda")]
+            {
+                Driver::Cuda
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                panic!("EERIE_HAL_DRIVER=cuda requires the cuda feature")
+            }
+        }
+        other => panic!(
+            "unsupported EERIE_HAL_DRIVER={other}; expected local-sync, local-task, metal, or cuda"
+        ),
+    }
+}
+
+#[cfg(all(feature = "compiler", feature = "runtime"))]
+fn runtime_driver_for_backend(target_backend: &str) -> eerie::runtime::Driver {
+    if let Ok(driver) = std::env::var("EERIE_HAL_DRIVER") {
+        return parse_runtime_driver(&driver);
+    }
+
+    match target_backend {
+        "llvm-cpu" | "vmvx" => parse_runtime_driver("local-task"),
+        "metal-spirv" => parse_runtime_driver("metal"),
+        "cuda" => parse_runtime_driver("cuda"),
+        other => panic!(
+            "cannot infer runtime driver for EERIE_HAL_TARGET_BACKEND={other}; set EERIE_HAL_DRIVER"
+        ),
+    }
+}
+
+#[cfg(all(feature = "compiler", feature = "runtime"))]
+fn compile_mlir(data: &[u8], target_backend: &str) -> Vec<u8> {
     use eerie::compiler;
-    let target_backend =
-        std::env::var("EERIE_HAL_TARGET_BACKEND").unwrap_or_else(|_| "llvm-cpu".to_string());
     let compiler = compiler::Compiler::new().expect("failed to initialize IREE compiler");
     let mut compiler_session = compiler.create_session();
     compiler_session
@@ -61,55 +111,28 @@ fn load_image_bin(path: PathBuf) -> Vec<f32> {
     image_bin
 }
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
-    use eerie::runtime;
-    let instance = runtime::vm::Instance::new().unwrap();
-    let registry = runtime::hal::DriverRegistry::with_available_drivers()
-        .expect("failed to create HAL driver registry");
-    let hal_driver = std::env::var("EERIE_HAL_DRIVER").unwrap_or_else(|_| "local-task".to_string());
-    let driver = registry
-        .create_driver(&hal_driver)
-        .unwrap_or_else(|err| panic!("failed to create HAL driver {hal_driver}: {err:?}"));
-    let device = driver
-        .create_default_device()
-        .unwrap_or_else(|err| panic!("failed to create default device for {hal_driver}: {err:?}"));
-    let hal_module =
-        runtime::vm::Module::hal(&instance, &device).expect("failed to create HAL VM module");
-    let bytecode_module =
-        runtime::vm::Module::bytecode(&instance, vmfb).expect("failed to load bytecode module");
-    let context = runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module])
-        .expect("failed to create VM context");
-    let function = context
-        .resolve_function("module.serving_default")
+fn run(vmfb: &[u8], image_bin: &[f32], driver: eerie::runtime::Driver) -> Vec<f32> {
+    use eerie::runtime::{BufferView, Runtime};
+
+    let runtime =
+        Runtime::new(driver).unwrap_or_else(|err| panic!("failed to create runtime: {err:?}"));
+    let program = runtime.load_vmfb(vmfb).expect("failed to load VMFB");
+    let input = runtime
+        .buffer_view(&[1, 3, 224, 224], image_bin)
+        .expect("failed to upload input image tensor");
+    let function = program
+        .function("module.serving_default")
         .expect("failed to resolve module.serving_default");
-    let input = runtime::hal::BufferView::<f32>::from_host(
-        &device,
-        &[1, 3, 224, 224],
-        runtime::hal::Encoding::DenseRowMajor,
-        image_bin,
-    )
-    .expect("failed to upload input image tensor");
-    let mut inputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
-        .expect("failed to create VM input list");
-    inputs
-        .push_ref(
-            &input
-                .to_ref(&instance)
-                .expect("failed to retain input buffer view"),
-        )
-        .expect("failed to push input buffer view");
-    let mut outputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
-        .expect("failed to create VM output list");
-    function
-        .invoke(&inputs, &mut outputs)
+    let outputs = function
+        .invoke([&input])
         .expect("failed to invoke module.serving_default");
-    outputs
-        .get_ref::<runtime::hal::BufferView<f32>>(0)
-        .expect("missing output buffer view")
-        .to_buffer_view()
-        .expect("failed to retain output buffer view")
-        .read_to_vec(&device)
-        .expect("failed to read output tensor to host")
+    let output: BufferView<f32> = outputs
+        .into_iter()
+        .next()
+        .expect("missing output tensor")
+        .try_into()
+        .expect("unexpected output tensor type");
+    output.read().expect("failed to read output tensor to host")
 }
 #[cfg(all(feature = "compiler", feature = "runtime"))]
 fn main() {
@@ -118,14 +141,16 @@ fn main() {
     let start = std::time::Instant::now();
     let mlir_bytecode =
         std::fs::read("examples/resnet50.mlir").expect("missing examples/resnet50.mlir");
-    let compiled_bytecode = compile_mlir(&mlir_bytecode);
+    let target_backend = target_backend();
+    let runtime_driver = runtime_driver_for_backend(&target_backend);
+    let compiled_bytecode = compile_mlir(&mlir_bytecode, &target_backend);
 
     println!("Compiled in {} ms", start.elapsed().as_millis());
 
     // timer for run
     let start = std::time::Instant::now();
     let image_bin = load_image_bin(PathBuf::from_str("examples/cat.bin").unwrap());
-    let output = run(&compiled_bytecode, &image_bin);
+    let output = run(&compiled_bytecode, &image_bin, runtime_driver);
     println!("Run in {} ms", start.elapsed().as_millis());
     let max_idx = output
         .iter()
