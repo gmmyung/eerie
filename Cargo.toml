@@ -1,6 +1,6 @@
 [package]
 name = "eerie"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Gyungmin Myung"]
@@ -13,7 +13,7 @@ no-default-features = true
 features = ["std", "runtime", "half"]
 
 [dependencies]
-eerie-sys = { path = "eerie-sys", version = "0.3.2", default-features = false }
+eerie-sys = { path = "eerie-sys", version = "0.3.3", default-features = false }
 thiserror = { version = "2.0", optional = true }
 log = "0.4"
 half = { version = "2.7", default-features = false, optional = true }

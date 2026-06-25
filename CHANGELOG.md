@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-06-26
 
 ### Added
 
@@ -13,6 +13,10 @@
 - Moved low-level VM/HAL assembly APIs behind the crate-private runtime implementation; public runtime usage now goes through the safe high-level API.
 - Use a retained process-global VM instance for hosted runtime setup to avoid concurrent HAL type registration hazards in IREE's low-level initialization path.
 - Treat macOS Vulkan as unsupported in eerie; use the Metal backend on macOS.
+
+### Notes
+
+- Published `eerie-sys` `0.3.3` with the new optional `vulkan` feature.
 
 ## 0.4.3 - 2026-06-22
 
