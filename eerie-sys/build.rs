@@ -354,6 +354,8 @@ fn main() {
             }
 
             "macos" => {
+                #[cfg(feature = "vulkan")]
+                println!("cargo:rustc-link-lib=c++");
                 println!("cargo:rustc-link-lib=framework=Foundation");
                 println!("cargo:rustc-link-lib=framework=Metal");
             }
