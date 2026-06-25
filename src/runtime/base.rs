@@ -1,36 +1,71 @@
-use core::{alloc::Layout, ffi::c_void, fmt::Display, marker::PhantomData};
 extern crate alloc;
+use alloc::rc::Rc;
+use core::{alloc::Layout, ffi::c_void, fmt::Display, marker::PhantomData};
 use eerie_sys::runtime as sys;
 use log::trace;
+#[cfg(feature = "std")]
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-/// A wrapper for a mutable byte span
-pub struct ByteSpan<'a> {
-    pub(crate) ctx: sys::iree_byte_span_t,
-    marker: PhantomData<&'a mut [u8]>,
+#[cfg(feature = "std")]
+static RUNTIME_LOCK: RwLock<()> = RwLock::new(());
+
+pub(crate) type NotSendSync = PhantomData<Rc<()>>;
+
+pub(crate) const fn not_send_sync() -> NotSendSync {
+    PhantomData
 }
 
-impl<'a> From<&'a mut [u8]> for ByteSpan<'a> {
-    fn from(slice: &'a mut [u8]) -> Self {
-        let byte_span = sys::iree_byte_span_t {
-            data: slice.as_ptr() as *mut u8,
-            data_length: slice.len(),
-        };
-        Self {
-            ctx: byte_span,
-            marker: PhantomData,
+#[cfg(feature = "std")]
+pub(crate) struct RuntimeLifecycleGuard {
+    _guard: RwLockWriteGuard<'static, ()>,
+}
+
+#[cfg(feature = "std")]
+pub(crate) struct RuntimeInvocationGuard {
+    _guard: RwLockReadGuard<'static, ()>,
+}
+
+#[cfg(not(feature = "std"))]
+pub(crate) struct RuntimeLifecycleGuard;
+
+#[cfg(not(feature = "std"))]
+pub(crate) struct RuntimeInvocationGuard;
+
+pub(crate) fn runtime_lifecycle_guard() -> RuntimeLifecycleGuard {
+    #[cfg(feature = "std")]
+    {
+        RuntimeLifecycleGuard {
+            _guard: RUNTIME_LOCK
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
         }
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        RuntimeLifecycleGuard
     }
 }
 
-impl<'a> From<ByteSpan<'a>> for &'a mut [u8] {
-    fn from(byte_span: ByteSpan<'a>) -> Self {
-        unsafe { core::slice::from_raw_parts_mut(byte_span.ctx.data, byte_span.ctx.data_length) }
+pub(crate) fn runtime_invocation_guard() -> RuntimeInvocationGuard {
+    #[cfg(feature = "std")]
+    {
+        RuntimeInvocationGuard {
+            _guard: RUNTIME_LOCK
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        RuntimeInvocationGuard
     }
 }
 
 /// A wrapper for a constant byte span
-pub struct ConstByteSpan<'a> {
-    pub ctx: sys::iree_const_byte_span_t,
+pub(crate) struct ConstByteSpan<'a> {
+    pub(crate) ctx: sys::iree_const_byte_span_t,
     marker: PhantomData<&'a [u8]>,
 }
 
@@ -47,26 +82,18 @@ impl<'a> From<&'a [u8]> for ConstByteSpan<'a> {
     }
 }
 
-impl<'a> From<ConstByteSpan<'a>> for &'a [u8] {
-    fn from(byte_span: ConstByteSpan<'a>) -> Self {
-        unsafe { core::slice::from_raw_parts(byte_span.ctx.data, byte_span.ctx.data_length) }
-    }
-}
-
 /// A wrapper for a string view
-pub struct StringView<'a> {
-    pub ctx: sys::iree_string_view_t,
+pub(crate) struct StringView<'a> {
+    pub(crate) ctx: sys::iree_string_view_t,
     marker: PhantomData<&'a str>,
 }
 
 impl Display for StringView<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                self.ctx.data as *const u8,
-                self.ctx.size,
-            ))
-        })
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self.ctx.data as *const u8, self.ctx.size) };
+        let value = core::str::from_utf8(bytes).map_err(|_| core::fmt::Error)?;
+        write!(f, "{value}")
     }
 }
 
@@ -83,23 +110,12 @@ impl<'a> From<&'a str> for StringView<'a> {
     }
 }
 
-impl<'a> From<StringView<'a>> for &'a str {
-    fn from(string_view: StringView<'a>) -> Self {
-        unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-                string_view.ctx.data as *const u8,
-                string_view.ctx.size,
-            ))
-        }
-    }
-}
-
 pub(crate) struct Allocator {
     pub(crate) ctx: sys::iree_allocator_t,
 }
 
 impl Allocator {
-    pub fn get_global() -> Self {
+    pub(crate) fn get_global() -> Self {
         let allocator = sys::iree_allocator_t {
             self_: core::ptr::null_mut(),
             ctl: Some(rust_allocator_ctl),
@@ -107,7 +123,7 @@ impl Allocator {
         Self { ctx: allocator }
     }
 
-    pub fn null_allocator() -> Self {
+    pub(crate) fn null_allocator() -> Self {
         let allocator = sys::iree_allocator_t {
             self_: core::ptr::null_mut(),
             ctl: None,
@@ -236,7 +252,7 @@ unsafe extern "C" fn rust_allocator_ctl(
 }
 
 /// IREE runtime status
-pub struct Status {
+pub(crate) struct Status {
     ctx: sys::iree_status_t,
 }
 
@@ -256,21 +272,11 @@ impl Status {
         self.ctx as usize == 0
     }
 
-    /// Converts from `Status` to `Result<(), StatusError>`.
-    pub fn to_result(self) -> Result<(), StatusError> {
+    pub(crate) fn into_result(self) -> Result<(), StatusError> {
         if self.is_ok() {
             Ok(())
         } else {
             Err(StatusError { status: self })
-        }
-    }
-
-    /// Returns a new status that is |base_status| if not OK and otherwise returns
-    /// |new_status|. This allows for chaining failure handling code that may also
-    /// return statuses.
-    pub fn chain(self, other: Self) -> Self {
-        Self {
-            ctx: unsafe { sys::iree_status_join(self.ctx, other.ctx) },
         }
     }
 }
@@ -320,7 +326,7 @@ impl Drop for Status {
 }
 
 /// IREE runtime status error
-pub enum StatusErrorKind {
+pub(crate) enum StatusErrorKind {
     Cancelled,
     Unknown,
     InvalidArgument,

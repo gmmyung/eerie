@@ -2,8 +2,6 @@
 use std::{path::PathBuf, str::FromStr};
 
 #[cfg(all(feature = "compiler", feature = "runtime"))]
-use eerie::runtime::vm::ToRef;
-#[cfg(all(feature = "compiler", feature = "runtime"))]
 fn compile_mlir(data: &[u8]) -> Vec<u8> {
     use eerie::compiler;
     let target_backend =
@@ -62,54 +60,27 @@ fn load_image_bin(path: PathBuf) -> Vec<f32> {
 }
 #[cfg(all(feature = "compiler", feature = "runtime"))]
 fn run(vmfb: &[u8], image_bin: &[f32]) -> Vec<f32> {
-    use eerie::runtime;
-    let instance = runtime::vm::Instance::global().unwrap();
-    let registry = runtime::hal::DriverRegistry::with_available_drivers()
-        .expect("failed to create HAL driver registry");
-    let hal_driver = std::env::var("EERIE_HAL_DRIVER").unwrap_or_else(|_| "local-task".to_string());
-    let driver = registry
-        .create_driver(&hal_driver)
-        .unwrap_or_else(|err| panic!("failed to create HAL driver {hal_driver}: {err:?}"));
-    let device = driver
-        .create_default_device()
-        .unwrap_or_else(|err| panic!("failed to create default device for {hal_driver}: {err:?}"));
-    let hal_module =
-        runtime::vm::Module::hal(&instance, &device).expect("failed to create HAL VM module");
-    let bytecode_module =
-        runtime::vm::Module::bytecode(&instance, vmfb).expect("failed to load bytecode module");
-    let context = runtime::vm::Context::with_modules(&instance, &[&hal_module, &bytecode_module])
-        .expect("failed to create VM context");
-    let function = context
-        .resolve_function("module.serving_default")
+    use eerie::runtime::{BufferView, Driver, Runtime};
+
+    let runtime = Runtime::new(Driver::LocalTask)
+        .unwrap_or_else(|err| panic!("failed to create local-task runtime: {err:?}"));
+    let program = runtime.load_vmfb(vmfb).expect("failed to load VMFB");
+    let input = runtime
+        .buffer_view(&[1, 3, 224, 224], image_bin)
+        .expect("failed to upload input image tensor");
+    let function = program
+        .function("module.serving_default")
         .expect("failed to resolve module.serving_default");
-    let input = runtime::hal::BufferView::<f32>::from_host(
-        &device,
-        &[1, 3, 224, 224],
-        runtime::hal::Encoding::DenseRowMajor,
-        image_bin,
-    )
-    .expect("failed to upload input image tensor");
-    let mut inputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
-        .expect("failed to create VM input list");
-    inputs
-        .push_ref(
-            &input
-                .to_ref(&instance)
-                .expect("failed to retain input buffer view"),
-        )
-        .expect("failed to push input buffer view");
-    let mut outputs = runtime::vm::List::<runtime::vm::Undefined>::new(1, &instance)
-        .expect("failed to create VM output list");
-    function
-        .invoke(&inputs, &mut outputs)
+    let outputs = function
+        .invoke([&input])
         .expect("failed to invoke module.serving_default");
-    outputs
-        .get_ref::<runtime::hal::BufferView<f32>>(0)
-        .expect("missing output buffer view")
-        .to_buffer_view()
-        .expect("failed to retain output buffer view")
-        .read_to_vec(&device)
-        .expect("failed to read output tensor to host")
+    let output: BufferView<f32> = outputs
+        .into_iter()
+        .next()
+        .expect("missing output tensor")
+        .try_into()
+        .expect("unexpected output tensor type");
+    output.read().expect("failed to read output tensor to host")
 }
 #[cfg(all(feature = "compiler", feature = "runtime"))]
 fn main() {
