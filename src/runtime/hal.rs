@@ -7,6 +7,7 @@ use core::{
 };
 
 use eerie_sys::runtime as sys;
+#[cfg(feature = "half")]
 use half::{bf16, f16};
 use log::debug;
 
@@ -278,10 +279,12 @@ impl_buffer_element!(
     f64,
     sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_FLOAT_64
 );
+#[cfg(feature = "half")]
 impl_buffer_element!(
     f16,
     sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_FLOAT_16
 );
+#[cfg(feature = "half")]
 impl_buffer_element!(
     bf16,
     sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BFLOAT_16
@@ -519,9 +522,11 @@ pub enum Value {
     I16(BufferView<i16>),
     I32(BufferView<i32>),
     I64(BufferView<i64>),
+    #[cfg(feature = "half")]
     F16(BufferView<f16>),
     F32(BufferView<f32>),
     F64(BufferView<f64>),
+    #[cfg(feature = "half")]
     Bf16(BufferView<bf16>),
 }
 
@@ -537,9 +542,11 @@ impl Value {
             Value::I16(_) => "i16",
             Value::I32(_) => "i32",
             Value::I64(_) => "i64",
+            #[cfg(feature = "half")]
             Value::F16(_) => "f16",
             Value::F32(_) => "f32",
             Value::F64(_) => "f64",
+            #[cfg(feature = "half")]
             Value::Bf16(_) => "bf16",
         }
     }
@@ -577,6 +584,7 @@ impl Value {
             sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_INT_64 => Ok(Value::I64(unsafe {
                 BufferView::from_raw_retained(ctx, device)
             })),
+            #[cfg(feature = "half")]
             sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_FLOAT_16 => {
                 Ok(Value::F16(unsafe {
                     BufferView::from_raw_retained(ctx, device)
@@ -592,6 +600,7 @@ impl Value {
                     BufferView::from_raw_retained(ctx, device)
                 }))
             }
+            #[cfg(feature = "half")]
             sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BFLOAT_16 => {
                 Ok(Value::Bf16(unsafe {
                     BufferView::from_raw_retained(ctx, device)
@@ -645,7 +654,9 @@ impl_value_conversion!(I8, i8, "i8");
 impl_value_conversion!(I16, i16, "i16");
 impl_value_conversion!(I32, i32, "i32");
 impl_value_conversion!(I64, i64, "i64");
+#[cfg(feature = "half")]
 impl_value_conversion!(F16, f16, "f16");
 impl_value_conversion!(F32, f32, "f32");
 impl_value_conversion!(F64, f64, "f64");
+#[cfg(feature = "half")]
 impl_value_conversion!(Bf16, bf16, "bf16");

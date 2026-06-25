@@ -129,9 +129,11 @@ fn push_value(
         Value::I16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
         Value::I32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
         Value::I64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+        #[cfg(feature = "half")]
         Value::F16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
         Value::F32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
         Value::F64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+        #[cfg(feature = "half")]
         Value::Bf16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
     }
     Ok(())
