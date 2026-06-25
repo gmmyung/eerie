@@ -162,6 +162,9 @@ fn main() {
         if bare_metal && cfg!(feature = "std") {
             panic!("The std feature cannot be used for target_os = \"none\"");
         }
+        if target_os == "macos" && cfg!(feature = "vulkan") {
+            panic!("The vulkan feature is not supported on macOS. Use the metal backend instead.");
+        }
         let build_path =
             out_path
                 .join("runtime_build")
@@ -354,8 +357,6 @@ fn main() {
             }
 
             "macos" => {
-                #[cfg(feature = "vulkan")]
-                println!("cargo:rustc-link-lib=c++");
                 println!("cargo:rustc-link-lib=framework=Foundation");
                 println!("cargo:rustc-link-lib=framework=Metal");
             }

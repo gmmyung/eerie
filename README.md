@@ -120,9 +120,10 @@ driver, and `DeviceInfo::spec()` converts a query result back into a
 for downstream IREE drivers without adding new Rust enum variants.
 
 `local-sync` is always available. `local-task` is available with `std`. `metal`
-is enabled by IREE on Apple Silicon. `cuda` is enabled with the `cuda` feature,
-and `vulkan` can be requested with the `vulkan` feature when the target has a
-usable Vulkan loader/device.
+is the supported GPU path on macOS/Apple Silicon. `cuda` is enabled with the
+`cuda` feature. `vulkan` can be requested with the `vulkan` feature on
+non-macOS targets with a usable Vulkan loader/device; macOS Vulkan is not
+supported by eerie.
 
 #### MacOS
 Install XCode and MacOS SDKs.
