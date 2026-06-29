@@ -3,3 +3,4 @@ target
 .vscode
 .venv
 .cargo
+.direnv
