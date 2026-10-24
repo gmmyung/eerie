@@ -18,8 +18,10 @@ env:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
       - uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
@@ -40,8 +42,10 @@ jobs:
 
   publish:
     needs: [validate, test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
       - uses: actions/checkout@v6.0.3
         with:
           submodules: true
@@ -52,6 +56,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Update pip
+        run: python -m pip install --upgrade pip
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake ninja-build
       - name: Install matching IREE compiler
