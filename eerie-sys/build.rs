@@ -310,6 +310,20 @@ fn main() {
             // Keep archive paths independent of Visual Studio's multi-config
             // output directories; Ninja still uses the MSVC compiler and CRT.
             config.generator("Ninja");
+            // Rust uses the release CRT even for debug builds. CMake otherwise
+            // selects the debug CRT, causing LNK4098 when Rust links the archive.
+            let static_crt = env::var("CARGO_CFG_TARGET_FEATURE")
+                .unwrap_or_default()
+                .split(',')
+                .any(|feature| feature == "crt-static");
+            config.static_crt(static_crt).define(
+                "CMAKE_MSVC_RUNTIME_LIBRARY",
+                if static_crt {
+                    "MultiThreaded"
+                } else {
+                    "MultiThreadedDLL"
+                },
+            );
         }
 
         // CMake config for IREE runtime build

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Match the Windows native runtime's CRT to Rust in debug and release builds, including `crt-static`, fixing linker warning LNK4098.
+
 ## 0.6.1 - 2026-10-24
 
 Published with `eerie-sys 0.4.1`.

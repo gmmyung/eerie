@@ -1,0 +1,105 @@
+# Contributing
+
+## Development setup
+
+Use the Nix shell for the pinned C/C++ toolchain and matching IREE compiler:
+
+```sh
+nix develop
+cargo fmt --all --check
+python -m unittest discover -s tools -p 'test_*.py'
+cargo test --locked --release --features half
+cargo test --locked --no-default-features --features std,runtime,half
+cargo check --locked --no-default-features --features compiler
+cargo check --locked --no-default-features --features runtime
+python tools/regenerate-fixtures.py --check
+```
+
+Without Nix, install the native dependencies and configure the compiler library
+as described in the [README](README.md). Windows builds need an x64 Visual Studio
+developer shell, Ninja, and LLVM.
+
+Do not use `cargo test --all-features` as a portable check: it enables CUDA,
+which needs its toolkit, and Vulkan, which is unsupported on macOS.
+
+## Fixtures and IREE updates
+
+`tools/regenerate-fixtures.py` recreates the full-HAL VMVX, inline VMVX, and
+64-bit VM call fixtures. Run it without `--check` to update them. Keep the IREE
+submodule, compiler package version, Nix environment, workflows, documentation,
+and generated fixtures aligned in the same change. Recheck compatibility when
+the compiler or HAL ABI changes.
+
+After cloning with submodules, run `python tools/init-runtime-deps.py` to
+initialize the runtime's nested dependencies. The CI workflows do this before
+building.
+
+## Platform validation
+
+The Rust workflow covers Linux, macOS, Windows x64 MSVC, and Cortex-M execution.
+It checks default, runtime-only, compiler-only, and no_std builds, fixture
+reproducibility, offline runtime documentation, and packaged raw bindings.
+Windows exercises debug and release builds, plus static CRT linkage.
+
+Run the standalone Cortex-M test with the Rust `thumbv7em-none-eabihf` target,
+Arm GNU toolchain, Clang/libclang, CMake, and `qemu-system-arm` on `PATH`:
+
+```sh
+python tools/test-bare-metal.py
+```
+
+The test runs on QEMU's `mps2-an386` board and checks the final link map.
+Toolchain C headers are used, but newlib/libc, native libm, nosys, libgcc, and
+libatomic archives must not enter the executable. Rust `compiler_builtins`,
+`libm`, `tinyrlibc`, and the `critical-section` synchronization shim supply the
+runtime support. RISC-V and board-specific native kernels need separate target
+configuration and hardware or emulator validation.
+
+GPU checks are opt-in on machines with the corresponding drivers/toolkits:
+
+```sh
+EERIE_TEST_METAL=1 cargo test --release --features half  # macOS
+EERIE_TEST_VULKAN=1 cargo test --release --features vulkan integration_tests::vulkan_smoke
+EERIE_TEST_CUDA=1 EERIE_CUDA_TARGET=sm_89 cargo test --release --features cuda integration_tests::cuda_smoke
+```
+
+The Linux CI job also tests Vulkan with Mesa's software driver. The manual
+GPU workflow targets a self-hosted Linux runner labeled `gpu` for CUDA/Vulkan
+hardware validation.
+
+## Releasing
+
+Pushing a `vX.Y.Z` tag runs the Linux/macOS/Windows and bare-metal suite, then
+publishes to crates.io using the repository's `CARGO_REGISTRY_TOKEN` secret.
+The tag must match the root `Cargo.toml` version, and its commit must already
+be on `main`.
+
+Before tagging:
+
+1. Bump the versions of changed crates and update the root `eerie-sys` dependency.
+2. Update both `Cargo.lock` files, including `tests/bare-metal/Cargo.lock`.
+3. Finalize `CHANGELOG.md` and merge the version changes into `main`.
+
+The crate versions may differ; the tag always uses the `eerie` version.
+With the native tools and matching compiler configured, preview the release
+without uploading anything (replace the version with the intended release):
+
+```sh
+python tools/publish.py --dry-run vX.Y.Z
+```
+
+Then tag the merged commit:
+
+```sh
+git switch main
+git pull --ff-only
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The publish job verifies both packages before uploading `eerie-sys`, followed
+by `eerie`. It skips an existing version only when the original manifest and
+source files match. Reusing a version with different sources fails before
+either upload. If only one crate was published, rerun the failed workflow to
+publish the remaining crate. Releases are serialized to prevent competing
+uploads.

@@ -19,6 +19,8 @@ jobs:
     # Clang/libclang, CMake, and Python supported by IREE.
     runs-on: [self-hosted, linux, gpu]
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
       - uses: actions/checkout@v6.0.3
         with:
           submodules: true
@@ -28,6 +30,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Update pip
+        run: python -m pip install --upgrade pip
       - run: python -m pip install iree-base-compiler==3.13.0
       - name: Configure compiler library
         run: |
