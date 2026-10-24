@@ -27,7 +27,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
     steps:
       - name: Enable long Windows paths
         if: runner.os == 'Windows'
@@ -58,10 +58,10 @@ jobs:
         run: python -m pip install iree-base-compiler==3.13.0
       - name: Configure compiler library
         run: python tools/configure-compiler.py
-      - name: Check formatting and fixture reproducibility
-        run: |
-          cargo fmt --all --check
-          python tools/regenerate-fixtures.py --check
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check fixture reproducibility
+        run: python tools/regenerate-fixtures.py --check
       - name: Test compiler and runtime
         env:
           RUST_BACKTRACE: '1'
@@ -75,10 +75,10 @@ jobs:
         run: |
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
           cargo test --locked --release --features vulkan integration_tests::vulkan_smoke
-      - name: Check compiler without runtime and no_std runtime
-        run: |
-          cargo check --locked --no-default-features --features compiler
-          cargo check --locked --no-default-features --features runtime
+      - name: Check compiler without runtime
+        run: cargo check --locked --no-default-features --features compiler
+      - name: Check no_std runtime
+        run: cargo check --locked --no-default-features --features runtime
       - name: Build documentation without network access
         env:
           DOCS_RS: '1'
