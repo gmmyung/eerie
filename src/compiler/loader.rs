@@ -3,11 +3,12 @@ use std::{
     env,
     ffi::OsString,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Command, Output, Stdio},
     sync::{Mutex, OnceLock},
 };
 use thiserror::Error;
 
+const IREE_VERSION: &str = "3.13.0";
 const PYTHON_PROBE: &str = "import importlib.metadata as m; d=m.distribution('iree-base-compiler'); print(d.version); print(d.locate_file('iree/compiler/_mlir_libs'))";
 
 #[cfg(target_os = "macos")]
@@ -20,8 +21,14 @@ const LIBRARY_NAME: &str = "libIREECompiler.so";
 /// Errors discovering or loading the compiler shared library.
 #[derive(Debug, Error)]
 pub enum CompilerLoadError {
-    #[error("Could not discover a compatible IREE compiler.\n{details}\nInstall it with `python -m pip install iree-base-compiler==3.13.0` in your active Python environment, or use Compiler::with_library(path).")]
+    #[error("Could not discover a compatible IREE compiler.\n{details}\nInstall it with `python -m pip install iree-base-compiler=={}` in your active Python environment, or use Compiler::with_library(path).", IREE_VERSION)]
     Discovery { details: String },
+    #[error("Could not resolve compiler library path {}: {source}", path.display())]
+    Path {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("Could not load IREE compiler from {}: {source}", path.display())]
     Library {
         path: PathBuf,
@@ -50,7 +57,7 @@ pub(super) fn api() -> &'static sys::IreeCompiler {
         .api
 }
 
-fn library_path(path: &Path) -> PathBuf {
+fn library_path(path: &Path) -> Result<PathBuf, CompilerLoadError> {
     let path = if path.is_dir() {
         path.join(LIBRARY_NAME)
     } else {
@@ -62,7 +69,7 @@ fn library_path(path: &Path) -> PathBuf {
     let canonical = dunce::canonicalize(&path);
     #[cfg(not(windows))]
     let canonical = path.canonicalize();
-    canonical.unwrap_or(path)
+    canonical.map_err(|source| CompilerLoadError::Path { path, source })
 }
 
 pub(super) fn load(
@@ -71,7 +78,7 @@ pub(super) fn load(
     let _guard = LOAD_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(loaded) = LOADED.get() {
         if let Some(path) = explicit_path {
-            let requested = library_path(path);
+            let requested = library_path(path)?;
             if loaded.path != requested {
                 return Err(CompilerLoadError::AlreadyLoaded {
                     loaded: loaded.path.clone(),
@@ -84,8 +91,6 @@ pub(super) fn load(
 
     let loaded = if let Some(path) = explicit_path {
         open(path)?
-    } else if let Some(path) = env::var_os("LIB_IREE_COMPILER") {
-        open(Path::new(&path))?
     } else {
         discover()?
     };
@@ -99,7 +104,7 @@ pub(super) fn load(
 }
 
 fn open(path: &Path) -> Result<LoadedCompiler, CompilerLoadError> {
-    let path = library_path(path);
+    let path = library_path(path)?;
     // Compiler libraries installed or explicitly selected by the application
     // must be trusted, like the libraries previously loaded by the system linker.
     let api =
@@ -114,33 +119,20 @@ fn python_candidates() -> Vec<(OsString, Vec<&'static str>)> {
     if let Some(python) = env::var_os("EERIE_PYTHON") {
         return vec![(python, vec![])];
     }
-    let mut candidates = Vec::new();
-    for variable in ["VIRTUAL_ENV", "CONDA_PREFIX"] {
-        if let Some(directory) = env::var_os(variable) {
-            #[cfg(windows)]
-            let suffix = if variable == "VIRTUAL_ENV" {
-                "Scripts/python.exe"
-            } else {
-                "python.exe"
-            };
-            #[cfg(not(windows))]
-            let suffix = "bin/python";
-            candidates.push((
-                PathBuf::from(directory).join(suffix).into_os_string(),
-                vec![],
-            ));
-        }
-    }
-    candidates.extend([
+    let candidates = vec![
         (OsString::from("python"), vec![]),
         (OsString::from("python3"), vec![]),
-    ]);
+    ];
     #[cfg(windows)]
-    candidates.push((OsString::from("py"), vec!["-3"]));
+    let candidates = {
+        let mut candidates = candidates;
+        candidates.push((OsString::from("py"), vec!["-3"]));
+        candidates
+    };
     candidates
 }
 
-fn probe_python(program: &OsString, arguments: &[&str]) -> Result<PathBuf, String> {
+fn probe_python(program: &OsString, arguments: &[&str]) -> std::io::Result<Output> {
     let mut command = Command::new(program);
     command
         .args(arguments)
@@ -151,7 +143,10 @@ fn probe_python(program: &OsString, arguments: &[&str]) -> Result<PathBuf, Strin
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW for GUI applications.
     }
-    let output = command.output().map_err(|error| error.to_string())?;
+    command.output()
+}
+
+fn compiler_path(output: Output) -> Result<PathBuf, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr)
             .lines()
@@ -163,9 +158,9 @@ fn probe_python(program: &OsString, arguments: &[&str]) -> Result<PathBuf, Strin
     let (version, directory) = stdout
         .split_once('\n')
         .ok_or_else(|| "Python returned no compiler package location".to_owned())?;
-    if version.trim() != "3.13.0" {
+    if version.trim() != IREE_VERSION {
         return Err(format!(
-            "iree-base-compiler {} is installed; expected 3.13.0",
+            "iree-base-compiler {} is installed; expected {IREE_VERSION}",
             version.trim()
         ));
     }
@@ -177,24 +172,22 @@ fn probe_python(program: &OsString, arguments: &[&str]) -> Result<PathBuf, Strin
 }
 
 fn discover() -> Result<LoadedCompiler, CompilerLoadError> {
-    let mut attempts = Vec::new();
     for (program, arguments) in python_candidates() {
-        match probe_python(&program, &arguments) {
-            Ok(path) => match open(&path) {
-                Ok(loaded) => return Ok(loaded),
-                Err(error) => attempts.push(error.to_string()),
-            },
-            Err(error) => attempts.push(format!("{}: {error}", program.to_string_lossy())),
-        }
-    }
-    // Also support a compiler installed in the system library search path.
-    if env::var_os("EERIE_PYTHON").is_none() {
-        match open(Path::new(LIBRARY_NAME)) {
-            Ok(loaded) => return Ok(loaded),
-            Err(error) => attempts.push(error.to_string()),
-        }
+        let output = match probe_python(&program, &arguments) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            result => result,
+        };
+        let path = output
+            .map_err(|error| error.to_string())
+            .and_then(compiler_path)
+            .map_err(|error| CompilerLoadError::Discovery {
+                details: format!("{}: {error}", program.to_string_lossy()),
+            })?;
+        return open(&path);
     }
     Err(CompilerLoadError::Discovery {
-        details: attempts.join("\n"),
+        details:
+            "No Python executable was found. Add Python to PATH or select it with EERIE_PYTHON."
+                .to_owned(),
     })
 }

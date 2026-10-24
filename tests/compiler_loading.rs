@@ -33,8 +33,7 @@ fn child(mode: &str, path: Option<&Path>) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "loader_child", "--nocapture"])
-        .env("EERIE_TEST_LOADER_MODE", mode)
-        .env_remove("LIB_IREE_COMPILER");
+        .env("EERIE_TEST_LOADER_MODE", mode);
     if let Some(path) = path {
         command.env("EERIE_TEST_LIBRARY_PATH", path);
     }
@@ -69,7 +68,32 @@ fn failed_discovery_can_retry_with_an_explicit_library() {
 }
 
 #[test]
-fn custom_libraries_support_spaces_unicode_and_directory_overrides() {
+fn active_python_without_iree_does_not_search_other_installations() {
+    let compiler = Compiler::new().unwrap();
+    let directory = TestDirectory::new();
+    let venv = directory.0.join("python");
+    let python = std::env::var_os("EERIE_PYTHON").unwrap_or_else(|| "python".into());
+    assert_success(
+        Command::new(python)
+            .args(["-m", "venv", "--without-pip"])
+            .arg(&venv)
+            .output()
+            .unwrap(),
+    );
+    let bin = venv.join(if cfg!(windows) { "Scripts" } else { "bin" });
+    let paths = std::iter::once(bin)
+        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))
+        .collect::<Vec<_>>();
+    let mut command = child("retry", Some(compiler.library_path()));
+    command
+        .env_remove("EERIE_PYTHON")
+        .env("VIRTUAL_ENV", venv)
+        .env("PATH", std::env::join_paths(paths).unwrap());
+    assert_success(command.output().unwrap());
+}
+
+#[test]
+fn custom_libraries_support_spaces_unicode_and_directories() {
     let compiler = Compiler::new().unwrap();
     let directory = TestDirectory::new();
     let unicode_directory = directory.0.join("compiler Δ 😀");
@@ -77,9 +101,11 @@ fn custom_libraries_support_spaces_unicode_and_directory_overrides() {
     let destination = unicode_directory.join(compiler.library_path().file_name().unwrap());
     std::fs::copy(compiler.library_path(), &destination).unwrap();
     assert_success(child("explicit", Some(&destination)).output().unwrap());
-    let mut command = child("discover", None);
-    command.env("LIB_IREE_COMPILER", &unicode_directory);
-    assert_success(command.output().unwrap());
+    assert_success(
+        child("explicit", Some(&unicode_directory))
+            .output()
+            .unwrap(),
+    );
 }
 
 fn mock_library(directory: &Path, version: u32) -> PathBuf {
@@ -141,60 +167,61 @@ fn loader_child() {
         return;
     };
     let path = std::env::var_os("EERIE_TEST_LIBRARY_PATH").map(PathBuf::from);
-    let compiler = match mode.as_str() {
-        "discover" => Compiler::new().unwrap(),
-        "explicit" => Compiler::with_library(path.as_ref().unwrap()).unwrap(),
-        "live-session" => {
-            let compiler = Compiler::new().unwrap();
-            let session = compiler.create_session();
-            let mut other = compiler.clone();
-            assert!(matches!(
-                other.setup_global_cl(vec!["eerie-loading-tests".into()]),
-                Err(CompilerError::GlobalCLInUse)
-            ));
-            drop(session);
-            other
-                .setup_global_cl(vec!["eerie-loading-tests".into()])
-                .unwrap();
-            other
-        }
-        "retry" => {
-            let error = Compiler::new().err().unwrap();
-            assert!(matches!(
-                error,
-                CompilerError::CompilerLoadError(CompilerLoadError::Discovery { .. })
-            ));
-            assert!(error
-                .to_string()
-                .contains("python -m pip install iree-base-compiler==3.13.0"));
-            Compiler::with_library(path.as_ref().unwrap()).unwrap()
-        }
-        "bad-api" | "missing-symbol" => {
-            let error = Compiler::with_library(path.as_ref().unwrap())
-                .err()
-                .unwrap();
-            assert!(matches!(
-                error,
-                CompilerError::CompilerLoadError(CompilerLoadError::Library { .. })
-            ));
-            assert!(error.to_string().contains(if mode == "bad-api" {
-                "incompatible; expected API 1.4"
-            } else {
-                "missing a required embedding API symbol"
-            }));
-            // A rejected library must not claim process-wide initialization.
-            Compiler::new().unwrap()
-        }
-        _ => panic!("unknown loader test mode"),
+    let (selected, clone) = {
+        let compiler = match mode.as_str() {
+            "discover" => Compiler::new().unwrap(),
+            "explicit" => Compiler::with_library(path.as_ref().unwrap()).unwrap(),
+            "live-session" => {
+                let compiler = Compiler::new().unwrap();
+                let session = compiler.create_session();
+                let mut other = compiler.clone();
+                assert!(matches!(
+                    other.setup_global_cl(vec!["eerie-loading-tests".into()]),
+                    Err(CompilerError::GlobalCLInUse)
+                ));
+                drop(session);
+                other
+                    .setup_global_cl(vec!["eerie-loading-tests".into()])
+                    .unwrap();
+                other
+            }
+            "retry" => {
+                let error = Compiler::new().err().unwrap();
+                assert!(matches!(
+                    error,
+                    CompilerError::CompilerLoadError(CompilerLoadError::Discovery { .. })
+                ));
+                assert!(error
+                    .to_string()
+                    .contains("python -m pip install iree-base-compiler==3.13.0"));
+                Compiler::with_library(path.as_ref().unwrap()).unwrap()
+            }
+            "bad-api" | "missing-symbol" => {
+                let error = Compiler::with_library(path.as_ref().unwrap())
+                    .err()
+                    .unwrap();
+                assert!(matches!(
+                    error,
+                    CompilerError::CompilerLoadError(CompilerLoadError::Library { .. })
+                ));
+                assert!(error.to_string().contains(if mode == "bad-api" {
+                    "incompatible; expected API 1.4"
+                } else {
+                    "missing a required embedding API symbol"
+                }));
+                // A rejected library must not claim process-wide initialization.
+                Compiler::new().unwrap()
+            }
+            _ => panic!("unknown loader test mode"),
+        };
+        let selected = compiler.library_path().to_owned();
+        #[cfg(windows)]
+        assert!(
+            !selected.to_string_lossy().starts_with(r"\\?\"),
+            "IREE's cmd.exe tool launcher cannot use verbatim library paths"
+        );
+        (selected, compiler.clone())
     };
-    let selected = compiler.library_path().to_owned();
-    #[cfg(windows)]
-    assert!(
-        !selected.to_string_lossy().starts_with(r"\\?\"),
-        "IREE's cmd.exe tool launcher cannot use verbatim library paths"
-    );
-    let clone = compiler.clone();
-    drop(compiler);
     assert!(!clone
         .compile_str(
             include_str!("mul.mlir"),
@@ -205,7 +232,7 @@ fn loader_child() {
     let recreated = Compiler::new().unwrap();
     assert_eq!(recreated.library_path(), selected);
     assert!(matches!(
-        Compiler::with_library("another-compiler-library"),
+        Compiler::with_library(std::env::current_exe().unwrap()),
         Err(CompilerError::CompilerLoadError(
             CompilerLoadError::AlreadyLoaded { .. }
         ))

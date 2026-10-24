@@ -4,20 +4,19 @@
 import os
 import pathlib
 import re
-import shutil
 import subprocess
 
 
 def main():
     root = pathlib.Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
-    # Hosted compiler rpaths do not apply to the freestanding executable.
+    # Host-specific Rust flags do not apply to the freestanding executable.
     environment.pop("RUSTFLAGS", None)
     environment.pop("RUSTDOCFLAGS", None)
     environment.pop("CARGO_ENCODED_RUSTFLAGS", None)
     for kind, tool in [("CC", "gcc"), ("CXX", "g++"), ("AR", "ar")]:
         name = f"{kind}_thumbv7em_none_eabihf"
-        environment.setdefault(name, shutil.which(f"arm-none-eabi-{tool}") or f"arm-none-eabi-{tool}")
+        environment.setdefault(name, f"arm-none-eabi-{tool}")
     directory = root / "tests/bare-metal"
     link_map = directory / "target/eerie-bare-metal.map"
     subprocess.run([

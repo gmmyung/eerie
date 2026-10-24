@@ -9,6 +9,10 @@ homepage = "https://github.com/gmmyung/eerie"
 repository = "https://github.com/gmmyung/eerie"
 documentation = "https://docs.rs/eerie-sys"
 exclude = [
+    "iree/tools/testing/",
+    "iree/runtime/bindings/",
+    "iree/third_party/hsa-runtime-headers/",
+    "iree/third_party/hip-build-deps/",
     "iree/third_party/llvm-project/",
     "iree/third_party/torch-mlir/",
     "iree/third_party/webgpu-headers/",
@@ -35,11 +39,7 @@ exclude = [
     "iree/experimental/",
     "iree/samples/",
     "iree/integrations/",
-    "iree/tests/compiler_driver",
-    "iree/tests/microbenchmarks",
-    "iree/tests/e2e",
-    "iree/tests/riscv32",
-    "iree/tests/transform_dialect",
+    "iree/tests/*/",
 ]
 
 [package.metadata.docs.rs]
@@ -47,19 +47,21 @@ no-default-features = true
 features = ["std", "runtime", "compiler"]
 
 [build-dependencies]
-bindgen = "0.72"
-cmake = "0.1"
-cc = "1.2"
+bindgen = { version = "0.72", optional = true }
+cmake = { version = "0.1", optional = true }
+cc = { version = "1.2", optional = true }
 
 [dependencies]
-critical-section = { version = "1.2", optional = true }
 libloading = { version = "0.8", optional = true }
 libc = { version = "0.2", optional = true }
 
+[target.'cfg(target_os = "none")'.dependencies]
+critical-section = { version = "1.2", optional = true }
+
 [features]
 default = ["compiler", "runtime", "std"]
-compiler = ["std", "dep:libloading", "dep:libc"]
-runtime = ["dep:critical-section"]
+compiler = ["std", "dep:bindgen", "dep:libloading", "dep:libc"]
+runtime = ["dep:bindgen", "dep:cc", "dep:cmake", "dep:critical-section"]
 std = []
-cuda = []
-vulkan = []
+cuda = ["runtime"]
+vulkan = ["runtime"]
