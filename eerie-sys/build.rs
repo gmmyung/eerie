@@ -202,7 +202,7 @@ fn main() {
             .arg("--print-sysroot")
             .output()
             .expect("Failed to execute command");
-        let mut sysroot = sysroot_output
+        let sysroot = sysroot_output
             .status
             .success()
             .then(|| {
@@ -213,23 +213,6 @@ fn main() {
                 )
             })
             .filter(|path| !path.as_os_str().is_empty());
-        if bare_metal && sysroot.is_none() {
-            // Arm GNU toolchains may use a relocatable newlib layout without
-            // reporting a sysroot. Derive it from the selected libc archive.
-            let output = cc::Build::new()
-                .get_compiler()
-                .to_command()
-                .arg("-print-file-name=libc.a")
-                .output()
-                .expect("Failed to locate newlib");
-            let archive = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
-            if archive.is_absolute() && archive.exists() {
-                sysroot = archive
-                    .parent()
-                    .and_then(Path::parent)
-                    .map(Path::to_path_buf);
-            }
-        }
         // The bare-metal build process requires runtime tools: iree-flatcc-cli and
         // iree-c-embed-data, so there has to be a host tool build before the
         // actual runtime cross-build.
@@ -373,6 +356,33 @@ fn main() {
         ];
         if bare_metal {
             binding_includes.push(bare_metal_sync_include_path);
+            // GCC's header layout can differ from Clang's sysroot convention
+            // (notably Debian's Arm packages). Query the compiler for the C
+            // header roots instead of deriving a path from a runtime archive.
+            let output = cc::Build::new()
+                .get_compiler()
+                .to_command()
+                .env("LC_ALL", "C")
+                .args(["-E", "-x", "c", "-v", "-"])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .expect("Failed to query embedded C header search paths");
+            let mut in_search_list = false;
+            for line in String::from_utf8_lossy(&output.stderr).lines() {
+                let line = line.trim();
+                if line == "#include <...> search starts here:" {
+                    in_search_list = true;
+                } else if line == "End of search list." {
+                    break;
+                } else if in_search_list {
+                    let path = PathBuf::from(line);
+                    // Let Clang use its own builtin headers, adding only the
+                    // toolchain's standard C headers needed by IREE.
+                    if path.join("stdlib.h").is_file() {
+                        binding_includes.push(path);
+                    }
+                }
+            }
         }
         generate_binding(
             sysroot.as_ref(),
