@@ -64,6 +64,12 @@ fn generate_runtime_bindings(
     additional_include_paths: &[PathBuf],
 ) {
     let mut builder = binding_builder(sysroot, header_path, include_path)
+        // Platform headers are implementation details, not part of IREE's API.
+        // In particular, Windows SDK structs can carry padding that cannot
+        // derive Default on Rust arrays larger than 32 elements.
+        .allowlist_type("iree_.*")
+        .allowlist_function("iree_.*")
+        .allowlist_var("IREE_.*")
         .size_t_is_usize(true)
         .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
         // glibc exposes these both as macros and enum variants. They are not
