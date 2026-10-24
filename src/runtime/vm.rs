@@ -154,7 +154,7 @@ impl Module {
             base::Status::from_raw(unsafe {
                 sys::iree_hal_inline_module_create(
                     instance.ctx,
-                    sys::iree_hal_inline_module_flag_bits_t_IREE_HAL_INLINE_MODULE_FLAG_NONE,
+                    sys::iree_hal_inline_module_flag_bits_t_IREE_HAL_INLINE_MODULE_FLAG_NONE as _,
                     sys::iree_hal_module_debug_sink_null(),
                     allocator,
                     instance.allocator().ctx,
@@ -169,7 +169,7 @@ impl Module {
                         instance.ctx,
                         sys::iree_hal_module_device_policy_default(),
                         device.group(),
-                        sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
+                        sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS as _,
                         sys::iree_hal_module_debug_sink_null(),
                         instance.allocator().ctx,
                         &mut ctx,
@@ -207,7 +207,7 @@ impl Module {
         let status = base::Status::from_raw(unsafe {
             sys::iree_hal_loader_module_create(
                 instance.ctx,
-                sys::iree_hal_loader_module_flag_bits_t_IREE_HAL_LOADER_MODULE_FLAG_NONE,
+                sys::iree_hal_loader_module_flag_bits_t_IREE_HAL_LOADER_MODULE_FLAG_NONE as _,
                 1,
                 &mut loader,
                 instance.allocator().ctx,
@@ -319,7 +319,7 @@ impl Context {
         base::Status::from_raw(unsafe {
             sys::iree_vm_context_create_with_modules(
                 instance.ctx,
-                sys::iree_vm_context_flag_bits_t_IREE_VM_CONTEXT_FLAG_NONE,
+                sys::iree_vm_context_flag_bits_t_IREE_VM_CONTEXT_FLAG_NONE as _,
                 raw_modules.len(),
                 raw_modules.as_mut_ptr(),
                 instance.allocator().ctx,
@@ -407,7 +407,7 @@ impl Function {
             sys::iree_vm_invoke(
                 self.context.inner.ctx,
                 self.ctx,
-                sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
+                sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE as _,
                 core::ptr::null(),
                 inputs.ctx,
                 outputs.ctx,

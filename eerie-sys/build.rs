@@ -75,6 +75,10 @@ fn generate_runtime_bindings(
         // glibc exposes these both as macros and enum variants. They are not
         // part of IREE's API and would otherwise generate duplicate constants.
         .blocklist_item("^FP_(NAN|INFINITE|ZERO|SUBNORMAL|NORMAL)$");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("none") {
+        // The Rust-backed pthread compatibility ABI needs this C header type.
+        builder = builder.allowlist_type("timespec");
+    }
     for additional_include_path in additional_include_paths {
         println!(
             "cargo:rerun-if-changed={}",
