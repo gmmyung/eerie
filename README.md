@@ -238,6 +238,20 @@ rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
 LIB_IREE_COMPILER = "/path/to/library"
 ```
 
+Windows (PowerShell in an x64 Visual Studio developer shell):
+
+```powershell
+python -m pip install iree-base-compiler==3.13.0 ninja
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+$env:LIB_IREE_COMPILER = python -c "import iree.compiler as c; print(c.__path__[0] + '/_mlir_libs')"
+$env:PATH = "$env:LIB_IREE_COMPILER;$env:PATH"
+cargo test --features half
+```
+
+Keep the compiler directory on `PATH` when running binaries that use the
+compiler feature. Eerie generates the MSVC import library for the wheel's
+`IREECompiler.dll` during the build.
+
 ## Development
 Use the Nix shell for the pinned C/C++ and Rust toolchain:
 ```sh
