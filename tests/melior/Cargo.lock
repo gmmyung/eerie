@@ -83,15 +83,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmake"
-version = "0.1.58"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "comrak"
 version = "0.55.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -147,8 +138,6 @@ name = "eerie-sys"
 version = "0.5.0"
 dependencies = [
  "bindgen",
- "cc",
- "cmake",
  "libc",
  "libloading",
 ]

@@ -41,7 +41,7 @@ jobs:
         run: python3 tools/init-runtime-deps.py
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -73,8 +73,10 @@ jobs:
           $llvm = if ($env:LLVM_PATH) { $env:LLVM_PATH } else { 'C:\Program Files\LLVM' }
           "LIBCLANG_PATH=$llvm\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           'CARGO_TARGET_DIR=C:\t' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Check compiler build before installing its library
-        run: cargo check --locked --no-default-features --features compiler
+      - name: Check builds before installing the compiler library
+        run: |
+          cargo check --locked --workspace --no-default-features
+          cargo check --locked --no-default-features --features compiler
       - name: Install matching IREE compiler
         run: python -m pip install iree-base-compiler==3.13.0
       - name: Check formatting
@@ -96,6 +98,7 @@ jobs:
           EERIE_TEST_VULKAN: '1'
         run: |
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
+          cargo test --locked --release --features vulkan registered_drivers_match_cargo_features
           cargo test --locked --release --features vulkan integration_tests::vulkan_smoke
       - name: Check no_std runtime
         run: cargo check --locked --no-default-features --features runtime

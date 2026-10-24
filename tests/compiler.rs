@@ -20,14 +20,16 @@ mod test {
     fn test_compiler() {
         init_compiler();
         let _guard = COMPILER.lock().unwrap();
-        let first = Compiler::new().unwrap();
-        let path = first.library_path().to_owned();
-        drop(first);
-        let second = Compiler::with_library(&path).unwrap();
-        assert_eq!(second.library_path(), path);
-        assert_eq!(second.api_version(), (1, 4));
-        let clone = second.clone();
-        drop(second);
+        let path = {
+            let compiler = Compiler::new().unwrap();
+            compiler.library_path().to_owned()
+        };
+        let clone = {
+            let compiler = Compiler::with_library(&path).unwrap();
+            assert_eq!(compiler.library_path(), path);
+            assert_eq!(compiler.api_version(), (1, 4));
+            compiler.clone()
+        };
         assert!(!clone
             .compile_str(
                 include_str!("mul.mlir"),
@@ -38,8 +40,8 @@ mod test {
     }
 
     #[test]
-    fn test_get_api_version() {
-        let (major, minor) = get_api_version();
+    fn test_api_version() {
+        let (major, minor) = Compiler::new().unwrap().api_version();
         info!("API Version: {}.{}", major, minor);
         assert!(major == 1);
         assert!(minor == 4);

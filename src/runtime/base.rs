@@ -88,15 +88,6 @@ pub(crate) struct StringView<'a> {
     marker: PhantomData<&'a str>,
 }
 
-impl Display for StringView<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self.ctx.data as *const u8, self.ctx.size) };
-        let value = core::str::from_utf8(bytes).map_err(|_| core::fmt::Error)?;
-        write!(f, "{value}")
-    }
-}
-
 impl<'a> From<&'a str> for StringView<'a> {
     fn from(s: &'a str) -> Self {
         let string_view = sys::iree_string_view_t {
@@ -142,49 +133,32 @@ unsafe extern "C" fn rust_allocator_ctl(
 ) -> sys::iree_status_t {
     // use Rust Global Allocator
     match command {
-        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_MALLOC => {
+        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_MALLOC
+        | sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC => {
             let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
             let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             };
             if alloc_size > isize::MAX as usize {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             }
-            let ptr = alloc::alloc::alloc(Layout::from_size_align_unchecked(alloc_size, ALIGNMENT));
+            let layout = Layout::from_size_align_unchecked(alloc_size, ALIGNMENT);
+            let ptr = if command == sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC {
+                alloc::alloc::alloc_zeroed(layout)
+            } else {
+                alloc::alloc::alloc(layout)
+            };
             if ptr.is_null() {
-                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_RESOURCE_EXHAUSTED)
+                    .ctx;
             }
             *(ptr as *mut usize) = size;
             *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
             trace!(
-                "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_MALLOC: size: {} -> {:?}",
-                size,
+                "rust_allocator_ctl: allocate command={command}, size={size} -> {:?}",
                 *inout_ptr
             );
-            core::ptr::null_mut() as sys::iree_status_t
-        }
-        sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_CALLOC => {
-            let size = (*(params as *const sys::iree_allocator_alloc_params_t)).byte_length;
-            let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
-            };
-            if alloc_size > isize::MAX as usize {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
-            }
-            let ptr = alloc::alloc::alloc_zeroed(Layout::from_size_align_unchecked(
-                alloc_size, ALIGNMENT,
-            ));
-            if ptr.is_null() {
-                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
-            }
-            *(ptr as *mut usize) = size;
-            *inout_ptr = ptr.wrapping_add(ALIGNMENT) as *mut c_void;
-            trace!(
-                "rust_allocator_ctl: IREE_ALLOCATOR_COMMAND_CALLOC: size: {} -> {:?}",
-                size,
-                *inout_ptr
-            );
-            core::ptr::null_mut() as sys::iree_status_t
+            core::ptr::null_mut()
         }
         sys::iree_allocator_command_e_IREE_ALLOCATOR_COMMAND_REALLOC => {
             if (*inout_ptr).is_null() {
@@ -205,13 +179,13 @@ unsafe extern "C" fn rust_allocator_ctl(
                 new_size
             );
             let Some(new_alloc_size) = new_size.checked_add(ALIGNMENT) else {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             };
             if new_alloc_size > isize::MAX as usize {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             }
             let Some(old_alloc_size) = old_size.checked_add(ALIGNMENT) else {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             };
             let ptr = alloc::alloc::realloc(
                 ptr as *mut u8,
@@ -219,7 +193,8 @@ unsafe extern "C" fn rust_allocator_ctl(
                 new_alloc_size,
             );
             if ptr.is_null() {
-                return Status::from_code(StatusErrorKind::ResourceExhausted).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_RESOURCE_EXHAUSTED)
+                    .ctx;
             }
             unsafe {
                 *(ptr as *mut usize) = new_size;
@@ -239,7 +214,7 @@ unsafe extern "C" fn rust_allocator_ctl(
                 *inout_ptr
             );
             let Some(alloc_size) = size.checked_add(ALIGNMENT) else {
-                return Status::from_code(StatusErrorKind::OutOfRange).ctx;
+                return Status::from_code(sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE).ctx;
             };
             alloc::alloc::dealloc(
                 ptr as *mut u8,
@@ -247,7 +222,7 @@ unsafe extern "C" fn rust_allocator_ctl(
             );
             core::ptr::null_mut() as sys::iree_status_t
         }
-        _ => Status::from_code(StatusErrorKind::Unimplemented).ctx,
+        _ => Status::from_code(sys::iree_status_code_e_IREE_STATUS_UNIMPLEMENTED).ctx,
     }
 }
 
@@ -261,8 +236,7 @@ impl Status {
         Self { ctx }
     }
 
-    pub(crate) fn from_code(status_kind: StatusErrorKind) -> Self {
-        let status: sys::iree_status_code_e = status_kind.into();
+    pub(crate) fn from_code(status: sys::iree_status_code_t) -> Self {
         Status {
             ctx: status as usize as sys::iree_status_t,
         }
@@ -321,82 +295,6 @@ impl Drop for Status {
             if !self.is_ok() {
                 sys::iree_status_ignore(self.ctx);
             }
-        }
-    }
-}
-
-/// IREE runtime status error
-pub(crate) enum StatusErrorKind {
-    Cancelled,
-    Unknown,
-    InvalidArgument,
-    DeadlineExceeded,
-    NotFound,
-    AlreadyExists,
-    PermissionDenied,
-    ResourceExhausted,
-    FailedPrecondition,
-    Aborted,
-    OutOfRange,
-    Unimplemented,
-    Internal,
-    Unavailable,
-    DataLoss,
-    Unauthenticated,
-    Deferred,
-    Incompatible,
-    UnknownStatus,
-}
-
-impl From<sys::iree_status_code_e> for StatusErrorKind {
-    fn from(status: sys::iree_status_code_e) -> Self {
-        match status {
-            sys::iree_status_code_e_IREE_STATUS_CANCELLED => Self::Cancelled,
-            sys::iree_status_code_e_IREE_STATUS_UNKNOWN => Self::Unknown,
-            sys::iree_status_code_e_IREE_STATUS_INVALID_ARGUMENT => Self::InvalidArgument,
-            sys::iree_status_code_e_IREE_STATUS_DEADLINE_EXCEEDED => Self::DeadlineExceeded,
-            sys::iree_status_code_e_IREE_STATUS_NOT_FOUND => Self::NotFound,
-            sys::iree_status_code_e_IREE_STATUS_ALREADY_EXISTS => Self::AlreadyExists,
-            sys::iree_status_code_e_IREE_STATUS_PERMISSION_DENIED => Self::PermissionDenied,
-            sys::iree_status_code_e_IREE_STATUS_RESOURCE_EXHAUSTED => Self::ResourceExhausted,
-            sys::iree_status_code_e_IREE_STATUS_FAILED_PRECONDITION => Self::FailedPrecondition,
-            sys::iree_status_code_e_IREE_STATUS_ABORTED => Self::Aborted,
-            sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE => Self::OutOfRange,
-            sys::iree_status_code_e_IREE_STATUS_UNIMPLEMENTED => Self::Unimplemented,
-            sys::iree_status_code_e_IREE_STATUS_INTERNAL => Self::Internal,
-            sys::iree_status_code_e_IREE_STATUS_UNAVAILABLE => Self::Unavailable,
-            sys::iree_status_code_e_IREE_STATUS_DATA_LOSS => Self::DataLoss,
-            sys::iree_status_code_e_IREE_STATUS_UNAUTHENTICATED => Self::Unauthenticated,
-            sys::iree_status_code_e_IREE_STATUS_DEFERRED => Self::Deferred,
-            sys::iree_status_code_e_IREE_STATUS_INCOMPATIBLE => Self::Incompatible,
-            _ => Self::UnknownStatus,
-        }
-    }
-}
-
-impl From<StatusErrorKind> for sys::iree_status_code_t {
-    fn from(status: StatusErrorKind) -> Self {
-        use StatusErrorKind::*;
-        match status {
-            Cancelled => sys::iree_status_code_e_IREE_STATUS_CANCELLED,
-            Unknown => sys::iree_status_code_e_IREE_STATUS_UNKNOWN,
-            InvalidArgument => sys::iree_status_code_e_IREE_STATUS_INVALID_ARGUMENT,
-            DeadlineExceeded => sys::iree_status_code_e_IREE_STATUS_DEADLINE_EXCEEDED,
-            NotFound => sys::iree_status_code_e_IREE_STATUS_NOT_FOUND,
-            AlreadyExists => sys::iree_status_code_e_IREE_STATUS_ALREADY_EXISTS,
-            PermissionDenied => sys::iree_status_code_e_IREE_STATUS_PERMISSION_DENIED,
-            ResourceExhausted => sys::iree_status_code_e_IREE_STATUS_RESOURCE_EXHAUSTED,
-            FailedPrecondition => sys::iree_status_code_e_IREE_STATUS_FAILED_PRECONDITION,
-            Aborted => sys::iree_status_code_e_IREE_STATUS_ABORTED,
-            OutOfRange => sys::iree_status_code_e_IREE_STATUS_OUT_OF_RANGE,
-            Unimplemented => sys::iree_status_code_e_IREE_STATUS_UNIMPLEMENTED,
-            Internal => sys::iree_status_code_e_IREE_STATUS_INTERNAL,
-            Unavailable => sys::iree_status_code_e_IREE_STATUS_UNAVAILABLE,
-            DataLoss => sys::iree_status_code_e_IREE_STATUS_DATA_LOSS,
-            Unauthenticated => sys::iree_status_code_e_IREE_STATUS_UNAUTHENTICATED,
-            Deferred => sys::iree_status_code_e_IREE_STATUS_DEFERRED,
-            Incompatible => sys::iree_status_code_e_IREE_STATUS_INCOMPATIBLE,
-            UnknownStatus => panic!("Unknown status"),
         }
     }
 }

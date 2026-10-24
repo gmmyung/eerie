@@ -17,17 +17,18 @@ fn main() {
     context.append_dialect_registry(&registry);
     context.load_all_available_dialects();
     let module = Module::parse(&context, include_str!("../../mul.mlir")).unwrap();
-    let compiler = compiler.take().unwrap_or_else(|| Compiler::new().unwrap());
-    for _ in 0..3 {
-        // Transfer text, never MLIR handles owned by the other implementation.
-        let text = module.as_operation().to_string();
-        let vmfb = compiler
-            .compile_str(&text, ["--iree-hal-target-backends=vmvx"])
-            .unwrap();
-        assert!(!vmfb.is_empty());
-        assert!(module.as_operation().verify());
+    {
+        let compiler = compiler.take().unwrap_or_else(|| Compiler::new().unwrap());
+        for _ in 0..3 {
+            // Transfer text, never MLIR handles owned by the other implementation.
+            let text = module.as_operation().to_string();
+            let vmfb = compiler
+                .compile_str(&text, ["--iree-hal-target-backends=vmvx"])
+                .unwrap();
+            assert!(!vmfb.is_empty());
+            assert!(module.as_operation().verify());
+        }
     }
-    drop(compiler);
     assert!(module.as_operation().verify());
     drop(module);
     drop(context);

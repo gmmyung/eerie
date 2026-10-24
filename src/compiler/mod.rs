@@ -91,22 +91,6 @@ impl std::fmt::Debug for Error {
 
 impl std::error::Error for Error {}
 
-/// Get the api version of the IREE compiler
-/// The compiler API is versioned. Within a major version, symbols may be
-/// added, but existing symbols must not be removed or changed to alter
-/// previously exposed functionality. A major version bump implies an API
-/// break and no forward or backward compatibility is assumed across major
-/// versions.
-/// # Panics
-///
-/// Panics if the compiler cannot be discovered or loaded. Use `Compiler::new`
-/// and `Compiler::api_version` for fallible discovery.
-pub fn get_api_version() -> (u16, u16) {
-    Compiler::new()
-        .expect("could not load IREE compiler; use Compiler::new() to handle discovery errors")
-        .api_version()
-}
-
 static GLOBAL_CL_IS_SET: OnceLock<()> = OnceLock::new();
 static PROCESS_CL_ARGS: OnceLock<Vec<String>> = OnceLock::new();
 static GLOBAL_CONFIGURATION: RwLock<()> = RwLock::new(());
@@ -131,8 +115,8 @@ impl Debug for Compiler {
 }
 
 impl Compiler {
-    /// Discovers and loads IREE from the active Python environment or the system
-    /// library search path. Install `iree-base-compiler==3.13.0` with pip first.
+    /// Discovers and loads IREE from the active Python executable on PATH, or
+    /// the interpreter selected by EERIE_PYTHON. Install `iree-base-compiler==3.13.0` first.
     /// No linker flags or library-path environment variables are required.
     pub fn new() -> Result<Self, CompilerError> {
         Ok(Self {
@@ -1266,8 +1250,6 @@ impl<'a> MemBufferOutput<'a> {
 pub enum CompilerError {
     #[error(transparent)]
     CompilerLoadError(#[from] CompilerLoadError),
-    #[error("Compiler initialized more than once")]
-    AlreadyInitialized,
     #[error("Global CL already set")]
     GlobalCLAlreadySet,
     #[error("Global command-line setup requires all compiler sessions to be dropped")]

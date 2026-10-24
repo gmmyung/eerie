@@ -1,11 +1,13 @@
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(clippy::all)]
-include!(concat!(
-    env!("OUT_DIR"),
-    "/compiler/iree/compiler/embedding_api.rs"
-));
+#[allow(
+    non_upper_case_globals,
+    non_camel_case_types,
+    non_snake_case,
+    clippy::all
+)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/compiler.rs"));
+}
+pub use bindings::*;
 
 /// A failure to open a compiler library or use its embedding API.
 #[derive(Debug)]

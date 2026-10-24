@@ -988,6 +988,42 @@ impl_value_conversion!(Bf16, bf16, "bf16");
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn registered_drivers_match_cargo_features() {
+        let registry = DriverRegistry::with_available_drivers().unwrap();
+        let names = {
+            let _guard = base::runtime_lifecycle_guard();
+            let mut count = 0;
+            let mut infos = core::ptr::null_mut();
+            base::Status::from_raw(unsafe {
+                sys::iree_hal_driver_registry_enumerate(
+                    registry.ctx,
+                    registry.host_allocator.ctx,
+                    &mut count,
+                    &mut infos,
+                )
+            })
+            .into_result()
+            .unwrap();
+            let names = unsafe { core::slice::from_raw_parts(infos, count) }
+                .iter()
+                .map(|info| string_view_to_string(info.driver_name))
+                .collect::<Vec<_>>();
+            unsafe { sys::iree_allocator_free(registry.host_allocator.ctx, infos.cast()) };
+            names
+        };
+        let has = |name: &str| names.iter().any(|driver| driver == name);
+        assert!(has("local-sync") && has("local-task"));
+        assert_eq!(has("cuda"), cfg!(feature = "cuda"));
+        assert_eq!(has("vulkan"), cfg!(feature = "vulkan"));
+        assert_eq!(
+            has("metal"),
+            cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        );
+        assert!(!has("amdgpu") && !has("hip") && !has("null"));
+    }
+
     #[test]
     fn invalid_bool_read_does_not_modify_host_values() {
         let device = Device::inline().unwrap();

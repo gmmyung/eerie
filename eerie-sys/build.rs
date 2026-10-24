@@ -24,10 +24,6 @@ fn binding_builder(
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("none") {
         builder = builder
             .clang_arg("-DIREE_PLATFORM_GENERIC=1")
-            .clang_arg("-Wno-char-subscripts")
-            .clang_arg("-Wno-format")
-            .clang_arg("-Wno-implicit-function-declaration")
-            .clang_arg("-Wno-unused-variable")
             .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
     }
 
@@ -38,24 +34,20 @@ fn binding_builder(
 }
 
 #[cfg(feature = "compiler")]
-fn generate_compiler_bindings(
-    sysroot: Option<&PathBuf>,
-    headers: &[PathBuf],
-    include_path: &Path,
-    bindings_path: &Path,
-) {
-    for path in headers {
-        let out_path = bindings_path.join(path).with_extension("rs");
-        std::fs::create_dir_all(out_path.parent().unwrap()).unwrap();
-        binding_builder(sysroot, &include_path.join(path), include_path)
-            .allowlist_function("ireeCompiler.*")
-            .dynamic_library_name("IreeCompiler")
-            .dynamic_link_require_all(true)
-            .generate()
-            .expect("Unable to generate compiler bindings")
-            .write_to_file(&out_path)
-            .expect("Couldn't write compiler bindings");
-    }
+fn generate_compiler_bindings(iree_path: &Path, out_path: &Path) {
+    let include_path = iree_path.join("compiler/bindings/c");
+    binding_builder(
+        None,
+        &include_path.join("iree/compiler/embedding_api.h"),
+        &include_path,
+    )
+    .allowlist_function("ireeCompiler.*")
+    .dynamic_library_name("IreeCompiler")
+    .dynamic_link_require_all(true)
+    .generate()
+    .expect("Unable to generate compiler bindings")
+    .write_to_file(out_path.join("compiler.rs"))
+    .expect("Couldn't write compiler bindings");
 }
 
 #[cfg(feature = "runtime")]
@@ -73,11 +65,7 @@ fn generate_runtime_bindings(
         .allowlist_type("iree_.*")
         .allowlist_function("iree_.*")
         .allowlist_var("(iree_|IREE_).*")
-        .size_t_is_usize(true)
-        .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
-        // glibc exposes these both as macros and enum variants. They are not
-        // part of IREE's API and would otherwise generate duplicate constants.
-        .blocklist_item("^FP_(NAN|INFINITE|ZERO|SUBNORMAL|NORMAL)$");
+        .size_t_is_usize(true);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("none") {
         // The Rust-backed pthread compatibility ABI needs this C header type.
         builder = builder.allowlist_type("timespec");
@@ -101,6 +89,13 @@ fn generate_runtime_bindings(
 const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
     ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
     ("IREE_BUILD_COMPILER", "OFF"),
+    ("IREE_BUILD_PYTHON_BINDINGS", "OFF"),
+    ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
+    ("IREE_HAL_DRIVER_AMDGPU", "OFF"),
+    ("IREE_HAL_DRIVER_HIP", "OFF"),
+    ("IREE_HAL_DRIVER_NULL", "OFF"),
+    // Rust links this archive, so native compiler LTO must stay disabled.
+    ("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""),
     ("IREE_BUILD_TESTS", "OFF"),
     ("IREE_BUILD_BENCHMARKS", "OFF"),
     ("IREE_BUILD_SAMPLES", "OFF"),
@@ -132,15 +127,7 @@ fn main() {
                 "Windows builds require the MSVC Rust target"
             );
         }
-        generate_compiler_bindings(
-            None,
-            // Path to compiler headers
-            &[PathBuf::from("iree/compiler/embedding_api.h")],
-            // Path to IREE compiler header sources
-            &iree_path.join("compiler/bindings/c"),
-            // Path to generated compiler bindings
-            &out_path.join("compiler"),
-        );
+        generate_compiler_bindings(&iree_path, &out_path);
     }
 
     // The runtime feature enables the IREE runtime. It configures available runtime backends based
@@ -193,7 +180,6 @@ fn main() {
             let mut host_config = cmake::Config::new(&iree_path);
 
             // CMake config for host tool
-            host_config.define("IREE_HAL_DRIVER_DEFAULTS", "OFF");
             RUNTIME_CMAKE_DEFINITIONS.iter().for_each(|(k, v)| {
                 host_config.define(k, v);
             });
@@ -231,47 +217,31 @@ fn main() {
             );
         }
 
-        // CMake config for IREE runtime build
         let mut cmake_defs = RUNTIME_CMAKE_DEFINITIONS.to_vec();
-        // Rust links this archive; native GCC/Clang LTO objects may use an
-        // incompatible format or LLVM version. Optimize without C LTO.
-        cmake_defs.push(("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""));
-
-        #[cfg(feature = "cuda")]
-        cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
-        #[cfg(feature = "vulkan")]
-        cmake_defs.push(("IREE_HAL_DRIVER_VULKAN", "ON"));
-
+        // Explicit values keep Cargo features authoritative, including when
+        // CMake reuses a cache from an earlier build.
+        let on_off = |enabled| if enabled { "ON" } else { "OFF" };
+        cmake_defs.extend([
+            ("IREE_HAL_DRIVER_LOCAL_SYNC", on_off(!bare_metal)),
+            ("IREE_HAL_DRIVER_LOCAL_TASK", on_off(!bare_metal)),
+            (
+                "IREE_HAL_DRIVER_METAL",
+                on_off(
+                    target_os == "macos"
+                        && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64"),
+                ),
+            ),
+            ("IREE_HAL_DRIVER_CUDA", on_off(cfg!(feature = "cuda"))),
+            ("IREE_HAL_DRIVER_VULKAN", on_off(cfg!(feature = "vulkan"))),
+        ]);
+        // cmake-rs selects Debug, Release, or MinSizeRel from Cargo's profile.
         let mut cflags = vec![];
-
-        if !msvc {
-            match std::env::var("OPT_LEVEL").unwrap().as_str() {
-                "z" => {
-                    cflags.push("-Oz".to_string());
-                }
-                "3" => {
-                    cflags.push("-O3".to_string());
-                }
-                "2" => {
-                    cflags.push("-O2".to_string());
-                }
-                "1" => {
-                    cflags.push("-O1".to_string());
-                }
-                "0" => {
-                    cflags.push("-O0".to_string());
-                }
-                _ => {}
-            }
-        }
 
         // If bare metal, use the following config.
         if bare_metal {
             // CMake config for no-std runtime build
             cmake_defs.extend(vec![
                 ("IREE_ENABLE_THREADING", "OFF"),
-                ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
-                ("IREE_HAL_DRIVER_LOCAL_SYNC", "OFF"),
                 ("EERIE_BARE_METAL", "ON"),
                 ("IREE_ENABLE_POSIX", "OFF"),
                 ("CMAKE_C_EXTENSIONS", "ON"),
