@@ -48,9 +48,11 @@ jobs:
         shell: bash
         run: |
           library_path=$(python -c 'import iree.compiler as c; print(f"{c.__path__[0]}/_mlir_libs")')
-          echo "LIB_IREE_COMPILER=$library_path" >> "$GITHUB_ENV"
-          echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,$library_path" >> "$GITHUB_ENV"
-          echo "RUSTDOCFLAGS=-C link-arg=-Wl,-rpath,$library_path" >> "$GITHUB_ENV"
+          {
+            echo "LIB_IREE_COMPILER=$library_path"
+            echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,$library_path"
+            echo "RUSTDOCFLAGS=-C link-arg=-Wl,-rpath,$library_path"
+          } >> "$GITHUB_ENV"
       - name: Check formatting and fixture reproducibility
         run: |
           cargo fmt --all --check
