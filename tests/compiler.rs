@@ -53,6 +53,20 @@ mod test {
             .as_ref()
             .unwrap()
             .get_process_cl_args();
+        assert!(!args.is_empty());
+        assert_eq!(
+            args[0],
+            std::env::args_os().next().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            args,
+            COMPILER
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .get_process_cl_args()
+        );
         info!("Process CL args: {:?}", args);
     }
 

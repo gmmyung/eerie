@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Initialize the compiler's process-argument query with real arguments and cache its result, fixing a Windows null-pointer crash and empty results on Unix.
 - Give compiler file outputs their own descriptor so destroying an output preserves the caller's Rust file; support Windows CRT descriptors and Unicode output paths.
 - Validate global compiler command-line arguments before consuming the one-time initialization slot, allowing a valid retry after an interior-NUL error.
 
