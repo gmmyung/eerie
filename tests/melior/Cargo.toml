@@ -9,3 +9,8 @@ publish = false
 [dependencies]
 eerie = { path = "../..", default-features = false, features = ["compiler"] }
 melior = "=0.27.8"
+
+# Nix's fortified glibc headers require optimization in this C++ helper,
+# including when the rest of the regression executable uses the debug profile.
+[profile.dev.package.tblgen]
+opt-level = 1
