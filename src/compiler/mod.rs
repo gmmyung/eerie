@@ -141,19 +141,23 @@ impl Compiler {
     /// This API is not yet considered version-stable. If using out of tree, please
     /// contact the developers.
     pub fn setup_global_cl(&mut self, argv: Vec<String>) -> Result<&mut Self, CompilerError> {
+        if GLOBAL_CL_IS_SET.get().is_some() {
+            return Err(CompilerError::GlobalCLAlreadySet);
+        }
+        // Validate before claiming the one-time initialization slot so invalid
+        // Rust input does not prevent a later valid call.
+        let c_str_vec = argv
+            .iter()
+            .map(|arg| CString::new(arg.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
         match GLOBAL_CL_IS_SET.set(()) {
             Ok(_) => {
-                let c_str_vec = argv
-                    .iter()
-                    .map(|arg| std::ffi::CString::new(arg.as_str()))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
-                let banner = std::ffi::CString::new("IREE Compiler")?;
                 unsafe {
                     sys::ireeCompilerSetupGlobalCL(
                         argv.len() as i32,
                         ptr_array.as_mut_ptr(),
-                        banner.as_ptr(),
+                        c"IREE Compiler".as_ptr(),
                         false,
                     )
                 }
@@ -219,6 +223,71 @@ impl Compiler {
     /// Creates a new session.
     pub fn create_session(&self) -> Session<'_> {
         Session::new(self)
+    }
+
+    /// Compiles an MLIR file to an owned VMFB archive using a fresh session.
+    ///
+    /// Flags configure this compilation only; they do not modify global flags.
+    /// For example, use `["--iree-hal-target-backends=llvm-cpu"]` for hosted CPU
+    /// execution. Reuse this `Compiler` for subsequent compilations.
+    pub fn compile_file<I, S>(
+        &self,
+        path: impl AsRef<Path>,
+        flags: I,
+    ) -> Result<Vec<u8>, CompilerError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut session = self.create_session();
+        session.set_flags(
+            flags
+                .into_iter()
+                .map(|flag| flag.as_ref().to_owned())
+                .collect(),
+        )?;
+        let source = session.create_source_from_file(path.as_ref())?;
+        self.compile_source(source)
+    }
+
+    /// Compiles MLIR text to an owned VMFB archive using a fresh session.
+    pub fn compile_str<I, S>(&self, source: &str, flags: I) -> Result<Vec<u8>, CompilerError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.compile_bytes(source.as_bytes(), flags)
+    }
+
+    /// Compiles MLIR text or MLIR bytecode to an owned VMFB archive.
+    ///
+    /// The returned bytes can outlive the source and compiler. Use the session
+    /// and invocation APIs when customizing the pipeline or output format.
+    pub fn compile_bytes<I, S>(&self, source: &[u8], flags: I) -> Result<Vec<u8>, CompilerError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut session = self.create_session();
+        session.set_flags(
+            flags
+                .into_iter()
+                .map(|flag| flag.as_ref().to_owned())
+                .collect(),
+        )?;
+        let source = session.create_source_from_buf(source)?;
+        self.compile_source(source)
+    }
+
+    fn compile_source(&self, source: Source<'_, '_>) -> Result<Vec<u8>, CompilerError> {
+        let mut invocation = source.session.create_invocation();
+        let mut output = MemBufferOutput::new(self)?;
+        invocation
+            .parse_source(source)?
+            .set_verify_ir(true)
+            .pipeline(Pipeline::Std)?
+            .output_vm_byte_code(&mut output)?;
+        Ok(output.map_memory()?.to_vec())
     }
 }
 
@@ -322,7 +391,8 @@ impl<'a> Session<'a> {
     }
 
     /// Creates a new source from a C string.
-    /// Rust string is not supported due to c api limitations.
+    /// Use `Compiler::compile_str` to compile Rust text directly to VMFB, or
+    /// `create_source_from_buf` for a source backed by Rust string bytes.
     pub fn create_source_from_cstr<'b>(
         &'a self,
         buffer: &'b CStr,

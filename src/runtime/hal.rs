@@ -696,14 +696,22 @@ impl<T: BufferElement> BufferView<T> {
         unsafe { sys::iree_hal_buffer_view_buffer(self.ctx) }
     }
 
-    fn byte_length(&self) -> usize {
+    /// Returns the size of the view's contents in bytes.
+    pub fn byte_length(&self) -> usize {
         unsafe { sys::iree_hal_buffer_view_byte_length(self.ctx) }
     }
 
-    fn rank(&self) -> usize {
+    /// Returns the number of dimensions without allocating a shape vector.
+    pub fn rank(&self) -> usize {
         unsafe { sys::iree_hal_buffer_view_shape_rank(self.ctx) }
     }
 
+    /// Returns the number of scalar elements in the view.
+    pub fn element_count(&self) -> usize {
+        self.byte_length() / T::element_size()
+    }
+
+    /// Returns the view's dimensions. A scalar has an empty shape.
     pub fn shape(&self) -> Vec<usize> {
         let rank = self.rank();
         if rank == 0 {
@@ -713,8 +721,7 @@ impl<T: BufferElement> BufferView<T> {
         unsafe { core::slice::from_raw_parts(dims, rank) }.to_vec()
     }
 
-    /// Synchronously reads the buffer view contents back to host memory.
-    pub fn read(&self) -> Result<Vec<T>, RuntimeError> {
+    fn validate_read(&self) -> Result<usize, RuntimeError> {
         let element_type = unsafe { sys::iree_hal_buffer_view_element_type(self.ctx) };
         if element_type != T::IREE_ELEMENT_TYPE as sys::iree_hal_element_type_t {
             return Err(RuntimeError::InvalidArgument(format!(
@@ -724,16 +731,46 @@ impl<T: BufferElement> BufferView<T> {
             )));
         }
         let byte_length = self.byte_length();
+        let element_size = T::element_size();
+        if !byte_length.is_multiple_of(element_size) {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "buffer byte length {} is not divisible by element size {}",
+                byte_length, element_size
+            )));
+        }
+        Ok(byte_length)
+    }
+
+    /// Synchronously reads the contents into an existing host slice.
+    ///
+    /// The destination must have exactly `element_count()` elements. Numeric
+    /// elements transfer directly into the slice without allocating. Bool8
+    /// values are validated in temporary storage before updating the slice.
+    pub fn read_into(&self, data: &mut [T]) -> Result<(), RuntimeError> {
+        let byte_length = self.validate_read()?;
+        if data.len() != self.element_count() {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "buffer read requires {} elements, got {}",
+                self.element_count(),
+                data.len()
+            )));
+        }
+        if T::IS_RAW_STORAGE_COMPATIBLE {
+            unsafe {
+                self.device
+                    .read_into(self.raw_buffer(), data.as_mut_ptr().cast(), byte_length)
+            }
+        } else {
+            data.copy_from_slice(&self.read()?);
+            Ok(())
+        }
+    }
+
+    /// Synchronously reads the buffer view contents back to host memory.
+    pub fn read(&self) -> Result<Vec<T>, RuntimeError> {
+        let byte_length = self.validate_read()?;
         if T::IS_RAW_STORAGE_COMPATIBLE {
             let element_size = T::element_size();
-            debug_assert_ne!(element_size, 0);
-            if !byte_length.is_multiple_of(element_size) {
-                return Err(RuntimeError::InvalidArgument(format!(
-                    "buffer byte length {} is not divisible by element size {}",
-                    byte_length, element_size
-                )));
-            }
-
             let mut data = Vec::<T>::with_capacity(byte_length / element_size);
             unsafe {
                 self.device
@@ -941,3 +978,30 @@ impl_value_conversion!(F32, f32, "f32");
 impl_value_conversion!(F64, f64, "f64");
 #[cfg(feature = "half")]
 impl_value_conversion!(Bf16, bf16, "bf16");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_bool_read_does_not_modify_host_values() {
+        let device = Device::inline().unwrap();
+        let buffer = BufferView::from_host(&device, &[2], &[true, false]).unwrap();
+        let invalid_bytes = [1_u8, 2];
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_buffer_map_write(
+                buffer.raw_buffer(),
+                0,
+                invalid_bytes.as_ptr().cast(),
+                invalid_bytes.len(),
+            )
+        })
+        .into_result()
+        .unwrap();
+
+        let mut destination = [false, true];
+        assert!(buffer.read_into(&mut destination).is_err());
+        assert_eq!(destination, [false, true]);
+        assert!(buffer.read().is_err());
+    }
+}

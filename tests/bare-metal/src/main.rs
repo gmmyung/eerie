@@ -43,10 +43,13 @@ fn run() -> Result<(), RuntimeError> {
     let rhs = runtime.buffer_view(&[100], &data)?;
     drop(program);
     drop(runtime);
-    let mut outputs = function.invoke([&lhs, &rhs])?;
-    let output = BufferView::<f32>::try_from(outputs.remove(0))?;
+    let output: BufferView<f32> = function.invoke_one([&lhs, &rhs])?;
     drop(function);
-    let values = output.read()?;
+    assert_eq!(output.rank(), 1);
+    assert_eq!(output.element_count(), 100);
+    assert_eq!(output.byte_length(), 400);
+    let mut values = [0.0; 100];
+    output.read_into(&mut values)?;
     assert_eq!(values[0], 0.0);
     assert_eq!(values[7], 49.0);
     assert_eq!(values[99], 9801.0);

@@ -4,69 +4,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(feature = "compiler")]
-fn generate_bindings(
-    sysroot: Option<&PathBuf>,
-    headers: &[PathBuf],
-    include_path: &Path,
-    bindings_path: &Path,
-) {
-    for path in headers {
-        let header_path = include_path.join(path);
-        println!("cargo:rerun-if-changed={}", header_path.display());
-        // Generate binding file name is the same as the header file
-        let out_path = bindings_path.join(path).with_extension("rs");
-        // Create the parent directory if it doesn't exist
-        if !out_path.parent().unwrap().exists() {
-            std::fs::create_dir_all(out_path.parent().unwrap()).unwrap();
-        }
-        let mut builder = bindgen::Builder::default()
-            .header(include_path.join(path).display().to_string())
-            .clang_arg(format!("-I{}", include_path.display()))
-            .derive_default(true)
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-
-        #[cfg(not(feature = "std"))]
-        {
-            builder = builder
-                .use_core()
-                .clang_arg("-DIREE_PLATFORM_GENERIC=1")
-                .clang_arg("-Wno-char-subscripts")
-                .clang_arg("-Wno-format")
-                .clang_arg("-Wno-implicit-function-declaration")
-                .clang_arg("-Wno-unused-variable")
-                .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
-        }
-
-        if let Some(sysroot) = sysroot {
-            builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
-        }
-
-        builder
-            .generate()
-            .expect("Unable to generate bindings")
-            .write_to_file(&out_path)
-            .expect("Couldn't write bindings!");
-    }
-}
-
-#[cfg(feature = "runtime")]
-fn generate_binding(
+#[cfg(any(feature = "compiler", feature = "runtime"))]
+fn binding_builder(
     sysroot: Option<&PathBuf>,
     header_path: &Path,
     include_path: &Path,
-    bindings_path: &Path,
-    additional_include_paths: &[PathBuf],
-) {
+) -> bindgen::Builder {
     println!("cargo:rerun-if-changed={}", header_path.display());
     let mut builder = bindgen::Builder::default()
         .header(header_path.display().to_string())
         .clang_arg(format!("-I{}", include_path.display()))
-        .size_t_is_usize(true)
-        .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
-        // glibc exposes these both as macros and enum variants. They are not
-        // part of IREE's API and would otherwise generate duplicate constants.
-        .blocklist_item("^FP_(NAN|INFINITE|ZERO|SUBNORMAL|NORMAL)$")
         .derive_default(true)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
@@ -84,6 +31,44 @@ fn generate_binding(
             .clang_arg("-DFLATCC_USE_GENERIC_ALIGNED_ALLOC=1")
     }
 
+    if let Some(sysroot) = sysroot {
+        builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
+    }
+    builder
+}
+
+#[cfg(feature = "compiler")]
+fn generate_compiler_bindings(
+    sysroot: Option<&PathBuf>,
+    headers: &[PathBuf],
+    include_path: &Path,
+    bindings_path: &Path,
+) {
+    for path in headers {
+        let out_path = bindings_path.join(path).with_extension("rs");
+        std::fs::create_dir_all(out_path.parent().unwrap()).unwrap();
+        binding_builder(sysroot, &include_path.join(path), include_path)
+            .generate()
+            .expect("Unable to generate compiler bindings")
+            .write_to_file(&out_path)
+            .expect("Couldn't write compiler bindings");
+    }
+}
+
+#[cfg(feature = "runtime")]
+fn generate_runtime_bindings(
+    sysroot: Option<&PathBuf>,
+    header_path: &Path,
+    include_path: &Path,
+    bindings_path: &Path,
+    additional_include_paths: &[PathBuf],
+) {
+    let mut builder = binding_builder(sysroot, header_path, include_path)
+        .size_t_is_usize(true)
+        .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
+        // glibc exposes these both as macros and enum variants. They are not
+        // part of IREE's API and would otherwise generate duplicate constants.
+        .blocklist_item("^FP_(NAN|INFINITE|ZERO|SUBNORMAL|NORMAL)$");
     for additional_include_path in additional_include_paths {
         println!(
             "cargo:rerun-if-changed={}",
@@ -92,16 +77,23 @@ fn generate_binding(
         builder = builder.clang_arg(format!("-I{}", additional_include_path.display()));
     }
 
-    if let Some(sysroot) = sysroot {
-        builder = builder.clang_arg(format!("--sysroot={}", sysroot.display()));
-    }
-
     builder
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(bindings_path)
         .expect("Couldn't write bindings!");
 }
+
+#[cfg(feature = "runtime")]
+const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
+    ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
+    ("IREE_BUILD_COMPILER", "OFF"),
+    ("IREE_BUILD_TESTS", "OFF"),
+    ("IREE_BUILD_BENCHMARKS", "OFF"),
+    ("IREE_BUILD_SAMPLES", "OFF"),
+    ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
+    ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
+];
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LIB_IREE_COMPILER");
@@ -128,7 +120,7 @@ fn main() {
             panic!("The compiler feature cannot be used in a no-std environment");
         }
 
-        generate_bindings(
+        generate_compiler_bindings(
             None,
             // Path to compiler headers
             &[PathBuf::from("iree/compiler/embedding_api.h")],
@@ -220,17 +212,8 @@ fn main() {
             let mut host_config = cmake::Config::new(&iree_path);
 
             // CMake config for host tool
-            let cmake_host_defs = [
-                ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
-                ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
-                ("IREE_BUILD_COMPILER", "OFF"),
-                ("IREE_BUILD_TESTS", "OFF"),
-                ("IREE_BUILD_BENCHMARKS", "OFF"),
-                ("IREE_BUILD_SAMPLES", "OFF"),
-                ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
-                ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-            ];
-            cmake_host_defs.iter().for_each(|(k, v)| {
+            host_config.define("IREE_HAL_DRIVER_DEFAULTS", "OFF");
+            RUNTIME_CMAKE_DEFINITIONS.iter().for_each(|(k, v)| {
                 host_config.define(k, v);
             });
 
@@ -249,18 +232,10 @@ fn main() {
         let mut config = cmake::Config::new(env!("CARGO_MANIFEST_DIR"));
 
         // CMake config for IREE runtime build
-        let mut cmake_defs = vec![
-            ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
-            ("IREE_BUILD_COMPILER", "OFF"),
-            ("IREE_BUILD_TESTS", "OFF"),
-            ("IREE_BUILD_BENCHMARKS", "OFF"),
-            // Rust links this archive; native GCC/Clang LTO objects may use an
-            // incompatible format or LLVM version. Optimize without C LTO.
-            ("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""),
-            ("IREE_BUILD_SAMPLES", "OFF"),
-            ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
-            ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
-        ];
+        let mut cmake_defs = RUNTIME_CMAKE_DEFINITIONS.to_vec();
+        // Rust links this archive; native GCC/Clang LTO objects may use an
+        // incompatible format or LLVM version. Optimize without C LTO.
+        cmake_defs.push(("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""));
 
         #[cfg(feature = "cuda")]
         cmake_defs.push(("IREE_HAL_DRIVER_CUDA", "ON"));
@@ -384,7 +359,7 @@ fn main() {
                 }
             }
         }
-        generate_binding(
+        generate_runtime_bindings(
             sysroot.as_ref(),
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime_api.h"),
             &iree_path.join("runtime/src"),

@@ -1,5 +1,3 @@
-// forking is necessary to avoid the compiler being initialized multiple times in the same process
-// TODO: make a global compiler object so we don't need this
 #![cfg(feature = "compiler")]
 mod test {
     use eerie::compiler::*;
@@ -61,12 +59,50 @@ mod test {
     #[test]
     fn setup_global_cl() {
         init_compiler();
-        COMPILER
-            .lock()
+        let mut compiler = COMPILER.lock().unwrap();
+        let compiler = compiler.as_mut().unwrap();
+        assert!(matches!(
+            compiler.setup_global_cl(vec!["invalid\0argument".into()]),
+            Err(CompilerError::NulError(_))
+        ));
+        compiler
+            .setup_global_cl(vec!["eerie-tests".into()])
+            .unwrap();
+        assert!(matches!(
+            compiler.setup_global_cl(vec!["eerie-tests".into()]),
+            Err(CompilerError::GlobalCLAlreadySet)
+        ));
+    }
+
+    #[test]
+    fn compile_owned_vmfb_from_file_text_and_bytes() {
+        init_compiler();
+        let compiler = COMPILER.lock().unwrap();
+        let compiler = compiler.as_ref().unwrap();
+        let flags = ["--iree-hal-target-backends=vmvx"];
+        assert!(!compiler
+            .compile_file("tests/mul.mlir", flags)
             .unwrap()
-            .as_mut()
+            .is_empty());
+        assert!(!compiler
+            .compile_str(include_str!("mul.mlir"), flags)
             .unwrap()
-            .setup_global_cl(vec!["--iree-example-flag=false".to_string()])
+            .is_empty());
+        assert!(!compiler
+            .compile_bytes(include_bytes!("mul.mlir"), flags)
+            .unwrap()
+            .is_empty());
+        assert!(compiler.compile_str("invalid MLIR", flags).is_err());
+        assert!(compiler
+            .compile_str(include_str!("mul.mlir"), ["--invalid-eerie-flag"])
+            .is_err());
+        assert!(matches!(
+            compiler.compile_file("tests/missing.mlir", flags),
+            Err(CompilerError::FileNotFound(_))
+        ));
+        // Failed compilations and session flags must not affect later calls.
+        compiler
+            .compile_str(include_str!("mul.mlir"), flags)
             .unwrap();
     }
 

@@ -13,6 +13,9 @@ fn buffer_view_metadata_and_readback() {
         .unwrap();
 
     assert_eq!(buffer.shape(), vec![2, 2]);
+    assert_eq!(buffer.rank(), 2);
+    assert_eq!(buffer.element_count(), 4);
+    assert_eq!(buffer.byte_length(), 16);
     assert_eq!(buffer.read().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
 }
 
@@ -22,7 +25,32 @@ fn scalar_buffer_view_has_empty_shape() {
     let buffer = runtime.buffer_view(&[], &[42.0_f32]).unwrap();
 
     assert_eq!(buffer.shape(), Vec::<usize>::new());
+    assert_eq!(buffer.rank(), 0);
+    assert_eq!(buffer.element_count(), 1);
     assert_eq!(buffer.read().unwrap(), vec![42.0]);
+}
+
+#[test]
+fn read_into_reuses_host_storage_and_checks_lengths() {
+    for spec in [DeviceSpec::local_sync(), DeviceSpec::local_inline()] {
+        let runtime = Runtime::new(spec).unwrap();
+        let buffer = runtime.buffer_view(&[2], &[5_i64, i64::MAX]).unwrap();
+        let mut destination = [0; 2];
+        for _ in 0..3 {
+            buffer.read_into(&mut destination).unwrap();
+            assert_eq!(destination, [5, i64::MAX]);
+        }
+        let mut wrong_length = [7; 3];
+        assert!(buffer.read_into(&mut wrong_length).is_err());
+        assert_eq!(wrong_length, [7; 3]);
+        let bools = runtime.buffer_view(&[2], &[true, false]).unwrap();
+        let mut destination = [false; 2];
+        bools.read_into(&mut destination).unwrap();
+        assert_eq!(destination, [true, false]);
+        let empty = runtime.buffer_view(&[0, 2], &[] as &[f32]).unwrap();
+        assert_eq!(empty.element_count(), 0);
+        empty.read_into(&mut []).unwrap();
+    }
 }
 
 #[test]
@@ -95,6 +123,10 @@ fn internal_i64_calls_preserve_high_words() {
     let runtime = Runtime::new(DeviceSpec::local_inline()).unwrap();
     let program = runtime.load_vmfb(include_bytes!("wide.vmfb")).unwrap();
     let function = program.function("wide.check").unwrap();
+    assert!(matches!(
+        function.invoke_one::<f32>(core::iter::empty::<Value>()),
+        Err(RuntimeError::InvalidArgument(_))
+    ));
     assert!(function
         .invoke(core::iter::empty::<Value>())
         .unwrap()
@@ -152,9 +184,13 @@ fn multiple_programs_and_retained_objects() {
         drop(runtime);
         drop(first);
         drop(second);
-        let output = take_output::<f32>(a.invoke([&input, &input]).unwrap());
+        let output: BufferView<f32> = a.invoke_one([&input, &input]).unwrap();
         assert_eq!(output.read().unwrap(), vec![9.0; 100]);
         drop(a);
+        assert!(matches!(
+            b.invoke_one::<i32>([&input, &input]),
+            Err(RuntimeError::InvalidArgument(_))
+        ));
         let output = take_output::<f32>(b.invoke([&input, &input]).unwrap());
         drop(b);
         drop(input);
@@ -373,27 +409,16 @@ mod integration_tests {
     fn compile_mlir_with_flags(target_backend: &str, path: &Path, extra: &[&str]) -> Vec<u8> {
         init_compiler();
         let compiler = COMPILER.lock().unwrap();
-        let mut compiler_session = compiler.as_ref().unwrap().create_session();
         let mut flags = vec![format!("--iree-hal-target-backends={target_backend}")];
         flags.extend(extra.iter().map(|flag| flag.to_string()));
         if target_backend == "metal-spirv" {
             flags.push("--iree-metal-compile-to-metallib=false".to_string());
         }
-        compiler_session.set_flags(flags).unwrap();
-        let source = compiler_session.create_source_from_file(path).unwrap();
-        let mut invocation = compiler_session.create_invocation();
-        let mut output = compiler::MemBufferOutput::new(compiler.as_ref().unwrap()).unwrap();
-        invocation
-            .parse_source(source)
+        compiler
+            .as_ref()
             .unwrap()
-            .set_verify_ir(true)
-            .set_compile_to_phase("end")
+            .compile_file(path, flags)
             .unwrap()
-            .pipeline(compiler::Pipeline::Std)
-            .unwrap()
-            .output_vm_byte_code(&mut output)
-            .unwrap();
-        output.map_memory().unwrap().to_vec()
     }
 
     #[test]
@@ -416,6 +441,31 @@ mod integration_tests {
         let output = run_mul(&vmfb, DeviceSpec::local_inline());
         assert_eq!(output[7], 49.0);
         assert_eq!(output[99], 9801.0);
+    }
+
+    #[test]
+    fn invoke_one_rejects_multiple_results() {
+        use eerie::runtime::{BufferView, Runtime, RuntimeError};
+
+        init_compiler();
+        let vmfb = COMPILER.lock().unwrap().as_ref().unwrap().compile_str(
+            "module @test { func.func @pair(%x: tensor<2xf32>) -> (tensor<2xf32>, tensor<2xf32>) { return %x, %x : tensor<2xf32>, tensor<2xf32> } }",
+            ["--iree-hal-target-backends=vmvx-inline", "--iree-execution-model=inline-static"],
+        ).unwrap();
+        let runtime = Runtime::new(DeviceSpec::local_inline()).unwrap();
+        let program = runtime.load_vmfb(&vmfb).unwrap();
+        let function = program.function("test.pair").unwrap();
+        let input = runtime.buffer_view(&[2], &[1_f32, 2.0]).unwrap();
+        assert!(matches!(
+            function.invoke_one::<f32>([&input]),
+            Err(RuntimeError::InvalidArgument(_))
+        ));
+        let outputs = function.invoke([&input]).unwrap();
+        assert_eq!(outputs.len(), 2);
+        for output in outputs {
+            let output: BufferView<f32> = output.try_into().unwrap();
+            assert_eq!(output.read().unwrap(), [1.0, 2.0]);
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, string::String, vec, vec::Vec};
+use alloc::{borrow::Cow, format, string::String, vec, vec::Vec};
 
 use super::{
     base,
@@ -59,6 +59,11 @@ impl Driver {
 
     pub fn as_str(&self) -> &str {
         &self.name
+    }
+
+    fn is_inline(&self) -> bool {
+        self.as_str() == "local-inline"
+            || (cfg!(target_os = "none") && self.as_str() == "local-sync")
     }
 }
 
@@ -194,9 +199,7 @@ impl Runtime {
     /// Creates a runtime using the selected HAL device.
     pub fn new(spec: DeviceSpec) -> Result<Self, RuntimeError> {
         let instance = vm::Instance::global()?;
-        let inline = spec.driver.as_str() == "local-inline"
-            || (cfg!(target_os = "none") && spec.driver.as_str() == "local-sync");
-        if inline {
+        if spec.driver.is_inline() {
             match &spec.selector {
                 DeviceSelector::Default | DeviceSelector::Ordinal(0) => {}
                 DeviceSelector::Path(path) if path.is_empty() => {}
@@ -243,9 +246,7 @@ impl Runtime {
 
     /// Queries available devices for a HAL driver.
     pub fn available_devices(driver: Driver) -> Result<Vec<DeviceInfo>, RuntimeError> {
-        if driver.as_str() == "local-inline"
-            || (cfg!(target_os = "none") && driver.as_str() == "local-sync")
-        {
+        if driver.is_inline() {
             return Ok(vec![DeviceInfo {
                 driver,
                 ordinal: 0,
@@ -289,9 +290,6 @@ pub struct Program {
     instance: vm::Instance,
     device: hal::Device,
     context: vm::Context,
-    _hal_module: vm::Module,
-    _loader_module: Option<vm::Module>,
-    _bytecode_module: vm::Module,
     _not_send_sync: base::NotSendSync,
 }
 
@@ -314,9 +312,6 @@ impl Program {
             instance: runtime.instance.clone(),
             device: runtime.device.clone(),
             context,
-            _hal_module: hal_module,
-            _loader_module: loader_module,
-            _bytecode_module: bytecode_module,
             _not_send_sync: base::not_send_sync(),
         })
     }
@@ -365,6 +360,26 @@ pub struct Function {
 }
 
 impl Function {
+    /// Invokes a function returning exactly one buffer view of type `T`.
+    ///
+    /// Rejects functions with a different result count before executing them.
+    /// A result element type mismatch is reported after execution.
+    pub fn invoke_one<T: BufferElement>(
+        &self,
+        inputs: impl IntoIterator<Item = impl Into<Value>>,
+    ) -> Result<BufferView<T>, RuntimeError>
+    where
+        BufferView<T>: TryFrom<Value, Error = RuntimeError>,
+    {
+        let output_count = self.inner.result_count()?;
+        if output_count != 1 {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "expected one function result, got {output_count}"
+            )));
+        }
+        self.invoke(inputs)?.remove(0).try_into()
+    }
+
     /// Invokes with HAL buffer-view inputs and returns dynamically typed outputs.
     pub fn invoke<I, V>(&self, inputs: I) -> Result<Vec<Value>, RuntimeError>
     where

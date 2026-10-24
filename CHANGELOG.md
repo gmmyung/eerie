@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `Compiler::compile_file`, `compile_str`, and `compile_bytes` for compiling directly to owned VMFB archives with per-call flags.
+- Added `Function::invoke_one` for a single typed output, with result-count validation before invocation.
+- Added `BufferView::read_into` for reusing host storage, plus allocation-free `rank`, `element_count`, and `byte_length` metadata queries.
+
+### Changed
+
+- Share one retained VM context and module set across resolved functions, removing repeated module-vector allocation and redundant program-owned module handles.
+- Consolidated compiler/runtime bindgen configuration and shared CMake defaults for hosted and embedded builds.
+- Simplified README, ResNet, and integration-test compilation paths using the convenience APIs.
+
+### Fixed
+
+- Validate global compiler command-line arguments before consuming the one-time initialization slot, allowing a valid retry after an interior-NUL error.
+
 ## 0.6.0 - 2026-10-24
 
 ### Changed

@@ -292,8 +292,15 @@ impl Drop for Module {
 }
 
 /// A VM context with a fixed module set.
+#[derive(Clone)]
 pub(crate) struct Context {
-    pub(crate) ctx: *mut sys::iree_vm_context_t,
+    inner: Rc<ContextInner>,
+}
+
+// Functions share one owner of the native context and its archive storage.
+// Cloning a function must not clone the module vector or native module refs.
+struct ContextInner {
+    ctx: *mut sys::iree_vm_context_t,
     instance: Instance,
     modules: Vec<Module>,
     _not_send_sync: base::NotSendSync,
@@ -321,17 +328,23 @@ impl Context {
         })
         .into_result()?;
         Ok(Self {
-            ctx,
-            instance: instance.clone(),
-            modules: modules.iter().map(|module| (*module).clone()).collect(),
-            _not_send_sync: base::not_send_sync(),
+            inner: Rc::new(ContextInner {
+                ctx,
+                instance: instance.clone(),
+                modules: modules.iter().map(|module| (*module).clone()).collect(),
+                _not_send_sync: base::not_send_sync(),
+            }),
         })
     }
 
     pub(crate) fn resolve_function(&self, name: &str) -> Result<Function, RuntimeError> {
         let mut ctx = sys::iree_vm_function_t::default();
         base::Status::from_raw(unsafe {
-            sys::iree_vm_context_resolve_function(self.ctx, StringView::from(name).ctx, &mut ctx)
+            sys::iree_vm_context_resolve_function(
+                self.inner.ctx,
+                StringView::from(name).ctx,
+                &mut ctx,
+            )
         })
         .into_result()?;
         Ok(Function {
@@ -342,21 +355,7 @@ impl Context {
     }
 }
 
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        unsafe {
-            sys::iree_vm_context_retain(self.ctx);
-        }
-        Self {
-            ctx: self.ctx,
-            instance: self.instance.clone(),
-            modules: self.modules.clone(),
-            _not_send_sync: base::not_send_sync(),
-        }
-    }
-}
-
-impl Drop for Context {
+impl Drop for ContextInner {
     fn drop(&mut self) {
         let _guard = base::runtime_lifecycle_guard();
 
@@ -406,13 +405,13 @@ impl Function {
         base::Status::from_raw(unsafe {
             trace!("iree_vm_invoke");
             sys::iree_vm_invoke(
-                self.context.ctx,
+                self.context.inner.ctx,
                 self.ctx,
                 sys::iree_vm_invocation_flag_bits_t_IREE_VM_INVOCATION_FLAG_NONE,
                 core::ptr::null(),
                 inputs.ctx,
                 outputs.ctx,
-                self.context.instance.allocator().ctx,
+                self.context.inner.instance.allocator().ctx,
             )
         })
         .into_result()

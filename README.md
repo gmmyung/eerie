@@ -38,31 +38,19 @@ module @arithmetic {
 ```rust
 #[cfg(all(feature = "std", feature = "compiler"))]
 fn output_vmfb() -> Vec<u8> {
-    use eerie::compiler::*;
-    use std::path::Path;
+    use eerie::compiler::Compiler;
+
     let compiler = Compiler::new().unwrap();
-    let mut session = compiler.create_session();
-    session
-        .set_flags(vec![
-            "--iree-hal-target-backends=llvm-cpu".to_string(),
-        ])
-        .unwrap();
-    let source = Source::from_file(&session, Path::new("simple_mul.mlir")).unwrap();
-    let mut invocation = session.create_invocation();
-    let mut output = MemBufferOutput::new(&compiler).unwrap();
-    invocation
-        .parse_source(source)
+    compiler
+        .compile_file("simple_mul.mlir", ["--iree-hal-target-backends=llvm-cpu"])
         .unwrap()
-        .set_verify_ir(true)
-        .set_compile_to_phase("end")
-        .unwrap()
-        .pipeline(Pipeline::Std)
-        .unwrap()
-        .output_vm_byte_code(&mut output)
-        .unwrap();
-    Vec::from(output.map_memory().unwrap())
 }
 ```
+Reuse one `Compiler` for multiple compilations. `compile_str` accepts MLIR text,
+and `compile_bytes` accepts MLIR text or bytecode. Each call uses a fresh session
+and returns owned VMFB bytes. The session and invocation APIs remain available
+for custom pipelines and output formats.
+
 Running a buffer view operation in an IREE runtime environment
 ```rust
 #[cfg(feature = "runtime")]
@@ -76,8 +64,7 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
     let rhs = runtime.buffer_view(&[4], &[4.0, 3.0, 2.0, 1.0]).unwrap();
 
     let function = program.function("arithmetic.simple_mul").unwrap();
-    let outputs = function.invoke([&lhs, &rhs]).unwrap();
-    let output: BufferView<f32> = outputs[0].clone().try_into().unwrap();
+    let output: BufferView<f32> = function.invoke_one([&lhs, &rhs]).unwrap();
     output.read().unwrap()
 }
 ```
@@ -97,8 +84,11 @@ program because IREE HAL type registration uses process-global adapter state.
 Typed tensor-shaped runtime values are represented by `runtime::BufferView<T>`.
 The low-level VM/HAL assembly APIs are intentionally crate-private; users create
 input buffers through `Runtime::buffer_view`, resolve functions through
-`Program::function`, invoke with `Function::invoke`, convert returned `Value`s
-into typed `BufferView<T>` handles, and read outputs with `BufferView::read`.
+`Program::function`, and invoke with `Function::invoke_one` for one typed result
+or `Function::invoke` for dynamically typed results. Read outputs with
+`BufferView::read`, or reuse host storage with `BufferView::read_into`.
+`rank`, `element_count`, and `byte_length` query buffer metadata without
+allocating a shape vector.
 Supported `BufferView<T>` element types are `bool` (IREE Bool8), signed and
 unsigned 8/16/32/64-bit integers, `f32`, and `f64`. The `half` feature adds
 `f16` and `bf16` support through the optional `half` crate dependency.
