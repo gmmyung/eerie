@@ -80,8 +80,8 @@ already be on `main`.
 Before tagging, bump the versions of changed crates, update the root
 `eerie-sys` dependency to match the native crate's version, update both
 `Cargo.lock` files (including `tests/bare-metal/Cargo.lock`), and finalize the
-changelog. For the current unreleased changes, the next versions are
-`eerie-sys 0.4.1` and `eerie 0.6.1`.
+changelog. The two crates can have different version numbers; the tag always
+uses the `eerie` version.
 
 ```sh
 # After merging the version changes into main:
