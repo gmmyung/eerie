@@ -69,7 +69,7 @@ fn generate_runtime_bindings(
         // derive Default on Rust arrays larger than 32 elements.
         .allowlist_type("iree_.*")
         .allowlist_function("iree_.*")
-        .allowlist_var("IREE_.*")
+        .allowlist_var("(iree_|IREE_).*")
         .size_t_is_usize(true)
         .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
         // glibc exposes these both as macros and enum variants. They are not
