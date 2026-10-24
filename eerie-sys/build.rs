@@ -48,6 +48,9 @@ fn generate_compiler_bindings(
         let out_path = bindings_path.join(path).with_extension("rs");
         std::fs::create_dir_all(out_path.parent().unwrap()).unwrap();
         binding_builder(sysroot, &include_path.join(path), include_path)
+            .allowlist_function("ireeCompiler.*")
+            .dynamic_library_name("IreeCompiler")
+            .dynamic_link_require_all(true)
             .generate()
             .expect("Unable to generate compiler bindings")
             .write_to_file(&out_path)
@@ -105,58 +108,7 @@ const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
     ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
 ];
 
-#[cfg(feature = "compiler")]
-fn windows_compiler_import_library(out_path: &Path) {
-    // PyPI ships IREECompiler.dll but no import library for Rust's MSVC linker.
-    // Bindgen has already parsed the public header; use those declarations as
-    // the export list rather than depending on dumpbin output formatting.
-    let bindings =
-        std::fs::read_to_string(out_path.join("compiler/iree/compiler/embedding_api.rs"))
-            .expect("Failed to read compiler declarations");
-    let exports = bindings
-        .lines()
-        .filter_map(|line| {
-            let declaration = line.trim().strip_prefix("pub fn ireeCompiler")?;
-            Some(format!("ireeCompiler{}", declaration.split('(').next()?))
-        })
-        .collect::<Vec<_>>();
-    assert!(!exports.is_empty(), "No IREE compiler exports found");
-    let definition = out_path.join("IREECompiler.def");
-    std::fs::write(
-        &definition,
-        format!(
-            "LIBRARY IREECompiler.dll\nEXPORTS\n{}\n",
-            exports.join("\n")
-        ),
-    )
-    .expect("Failed to write compiler export list");
-    let target = env::var("TARGET").unwrap();
-    let machine = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
-        Ok("x86_64") => "X64",
-        Ok("aarch64") => "ARM64",
-        other => panic!("Unsupported Windows compiler architecture: {other:?}"),
-    };
-    let status = cc::windows_registry::find_tool(&target, "lib.exe")
-        .expect("MSVC lib.exe is required; initialize the Visual Studio developer environment")
-        .to_command()
-        .arg("/NOLOGO")
-        .arg(format!("/MACHINE:{machine}"))
-        .arg(format!("/DEF:{}", definition.display()))
-        .arg(format!(
-            "/OUT:{}",
-            out_path.join("IREECompiler.lib").display()
-        ))
-        .status()
-        .expect("Failed to generate IREE compiler import library");
-    assert!(
-        status.success(),
-        "Failed to generate IREE compiler import library"
-    );
-    println!("cargo:rustc-link-search={}", out_path.display());
-}
-
 fn main() {
-    println!("cargo:rerun-if-env-changed=LIB_IREE_COMPILER");
     println!("cargo:rerun-if-changed=CMakeLists.txt");
     println!("cargo:rerun-if-changed=iree/CMakeLists.txt");
     #[cfg(feature = "runtime")]
@@ -169,17 +121,17 @@ fn main() {
     let bare_metal_sync_include_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bare_metal_sync/include");
 
-    // The compiler feature enables the IREE compiler features. The IREE compiler binaries should
-    // be downloaded from an external source such as pypi, and the downloaded binaries should be
-    // exported as environment variables. See README.md for more details.
+    // Generate a runtime-loaded API table. Building the crate does not require
+    // an installed compiler library; discovery happens in Compiler::new().
     #[cfg(feature = "compiler")]
     {
-        // The compiler feature cannot be used in a no-std environment
-        #[cfg(not(feature = "std"))]
-        {
-            panic!("The compiler feature cannot be used in a no-std environment");
+        if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+            assert_eq!(
+                env::var("CARGO_CFG_TARGET_ENV").as_deref(),
+                Ok("msvc"),
+                "Windows builds require the MSVC Rust target"
+            );
         }
-
         generate_compiler_bindings(
             None,
             // Path to compiler headers
@@ -189,53 +141,6 @@ fn main() {
             // Path to generated compiler bindings
             &out_path.join("compiler"),
         );
-
-        let compiler_lib_path = if std::env::var("DOCS_RS").is_ok() {
-            // Docs.rs automatically downloads the IREE compiler from pypi
-            // and sets the LIB_IREE_COMPILER environment variable
-
-            std::process::Command::new("python3")
-                .args(["-m", "pip", "install", "iree-base-compiler==3.13.0"])
-                .status()
-                .map_err(|e| format!("Failed to install IREE compiler: {}", e))
-                .unwrap()
-                .success()
-                .then_some(())
-                .expect("Failed to install IREE compiler");
-
-            // Find the IREE compiler library
-            let output = std::process::Command::new("python3")
-                .args([
-                    "-c",
-                    "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
-                ])
-                .output()
-                .expect("Failed to find IREE compiler library");
-            assert!(
-                output.status.success(),
-                "Failed to import the installed IREE compiler: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            std::str::from_utf8(&output.stdout)
-                .unwrap()
-                .trim()
-                .to_string()
-        } else {
-            // The user can set the LIB_IREE_COMPILER environment variable
-            env::var("LIB_IREE_COMPILER").expect(
-				"The LIB_IREE_COMPILER environment variable must be set to the path to the IREE compiler library")
-        };
-        // The linker needs to find the IREE compiler dynamic library
-        if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-            assert_eq!(
-                env::var("CARGO_CFG_TARGET_ENV").as_deref(),
-                Ok("msvc"),
-                "Windows builds require the MSVC Rust target"
-            );
-            windows_compiler_import_library(&out_path);
-        }
-        println!("cargo:rustc-link-search={}", compiler_lib_path);
-        println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
 
     // The runtime feature enables the IREE runtime. It configures available runtime backends based

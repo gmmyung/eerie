@@ -1,10 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - Unreleased
+
+Requires `eerie-sys 0.5.0`.
+
+### Changed
+
+- Discover and load the compiler shared library automatically at runtime, removing compiler path configuration, rpaths, and linker flags from normal installation. Building and documenting the compiler feature no longer requires an installed compiler library or network access.
+- Allow compiler handles to be created, cloned, and dropped independently while sharing one retained process-wide initialization. Add `Compiler::with_library`, `library_path`, and `api_version`.
+- Raw compiler bindings now expose an `eerie_sys::compiler::IreeCompiler` API table instead of linker-resolved free functions. Raw callers must load and initialize a table and retain it for every object created through it.
+- Include compiler APIs in docs.rs builds.
+
+Remove IREE-specific rpath settings from `RUSTFLAGS` and `.cargo/config.toml`
+when upgrading. `LIB_IREE_COMPILER` remains an optional override for existing
+custom installations; normal discovery needs no environment configuration.
 
 ### Fixed
 
 - Match the Windows native runtime's CRT to Rust in debug and release builds, including `crt-static`, fixing linker warning LNK4098.
+- Report compiler discovery, incompatible embedding API, and missing-symbol failures as recoverable errors, with retry after a failed load.
+- Load compiler symbols locally and prefer its own LLVM/MLIR implementations on glibc Linux, with a Melior coexistence regression. Stock macOS wheels still require a compiler build with isolated LLVM/MLIR symbols for Melior coexistence.
 
 ## 0.6.1 - 2026-10-24
 

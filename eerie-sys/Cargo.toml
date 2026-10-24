@@ -1,6 +1,6 @@
 [package]
 name = "eerie-sys"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 authors = ["Gyungmin Myung"]
 license = "Apache-2.0"
@@ -44,7 +44,7 @@ exclude = [
 
 [package.metadata.docs.rs]
 no-default-features = true
-features = ["std", "runtime"]
+features = ["std", "runtime", "compiler"]
 
 [build-dependencies]
 bindgen = "0.72"
@@ -53,10 +53,12 @@ cc = "1.2"
 
 [dependencies]
 critical-section = { version = "1.2", optional = true }
+libloading = { version = "0.8", optional = true }
+libc = { version = "0.2", optional = true }
 
 [features]
 default = ["compiler", "runtime", "std"]
-compiler = []
+compiler = ["std", "dep:libloading", "dep:libc"]
 runtime = ["dep:critical-section"]
 std = []
 cuda = []

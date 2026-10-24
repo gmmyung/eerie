@@ -56,14 +56,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Update pip
-        run: python -m pip install --upgrade pip
       - name: Install native dependencies
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake ninja-build
-      - name: Install matching IREE compiler
-        run: python -m pip install iree-base-compiler==3.13.0
-      - name: Configure compiler library
-        run: python tools/configure-compiler.py
       - name: Verify packages and publish in dependency order
         env:
           RELEASE_TAG: ${{ github.ref_name }}
