@@ -140,5 +140,7 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
         with:
           install_options: --no-daemon
+          # Hosted runners do not provide the namespaces Nix sandboxing needs.
+          extra_nix_config: sandbox = false
       - name: Test Melior with a separate LLVM/MLIR build
         run: nix develop .#melior -c python tools/test-melior.py

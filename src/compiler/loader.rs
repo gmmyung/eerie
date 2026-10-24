@@ -56,7 +56,13 @@ fn library_path(path: &Path) -> PathBuf {
     } else {
         path.to_owned()
     };
-    path.canonicalize().unwrap_or(path)
+    // IREE finds adjacent compiler tools using the loaded module's path.
+    // Its Windows tool launcher uses cmd.exe, which rejects verbatim paths.
+    #[cfg(windows)]
+    let canonical = dunce::canonicalize(&path);
+    #[cfg(not(windows))]
+    let canonical = path.canonicalize();
+    canonical.unwrap_or(path)
 }
 
 pub(super) fn load(

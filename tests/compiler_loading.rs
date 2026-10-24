@@ -188,6 +188,11 @@ fn loader_child() {
         _ => panic!("unknown loader test mode"),
     };
     let selected = compiler.library_path().to_owned();
+    #[cfg(windows)]
+    assert!(
+        !selected.to_string_lossy().starts_with(r"\\?\"),
+        "IREE's cmd.exe tool launcher cannot use verbatim library paths"
+    );
     let clone = compiler.clone();
     drop(compiler);
     assert!(!clone
