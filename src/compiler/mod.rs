@@ -1,10 +1,13 @@
 use eerie_sys::compiler as sys;
 use log::debug;
+#[cfg(unix)]
+use std::os::fd::IntoRawFd;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, IntoRawHandle};
 use std::{
     ffi::{CStr, CString},
     fmt::{Debug, Display, Formatter},
     marker::{PhantomData, PhantomPinned},
-    os::fd::AsRawFd,
     path::Path,
     pin::Pin,
     sync::{Mutex, OnceLock},
@@ -50,6 +53,26 @@ fn path_to_cstring(path: &Path) -> Result<CString, CompilerError> {
     CString::new(path.to_string_lossy().as_bytes()).map_err(Into::into)
 }
 
+// IREE's ToolOutputFile closes the descriptor when destroyed. Give it an
+// independent descriptor so the caller's Rust File remains usable.
+fn duplicate_output_fd(file: &std::fs::File) -> Result<i32, std::io::Error> {
+    let duplicate = file.try_clone()?;
+    #[cfg(unix)]
+    return Ok(duplicate.into_raw_fd());
+    #[cfg(windows)]
+    {
+        let descriptor = unsafe {
+            libc::open_osfhandle(duplicate.as_raw_handle() as libc::intptr_t, libc::O_BINARY)
+        };
+        if descriptor == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // The CRT descriptor now owns this duplicated Windows handle.
+        let _ = duplicate.into_raw_handle();
+        Ok(descriptor)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
@@ -79,6 +102,7 @@ pub fn get_api_version() -> (u16, u16) {
 
 static IS_INITIALIZED: OnceLock<()> = OnceLock::new();
 static GLOBAL_CL_IS_SET: OnceLock<()> = OnceLock::new();
+static PROCESS_CL_ARGS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// The IREE compiler. The compiler is globally initialized when it is created. It can not be
 /// instantiated more than once.
@@ -111,28 +135,48 @@ impl Compiler {
 
     /// Returns process command-line arguments as normalized by the compiler API.
     pub fn get_process_cl_args(&self) -> Vec<String> {
-        let mut argc = 0;
-        let mut argv = core::ptr::null_mut();
-        unsafe {
-            sys::ireeCompilerGetProcessCLArgs(&mut argc, &mut argv);
-        }
-        if argv.is_null() || argc <= 0 {
-            return Vec::new();
-        }
-        unsafe { core::slice::from_raw_parts(argv, argc as usize) }
-            .iter()
-            .filter_map(|arg| {
-                if arg.is_null() {
-                    None
-                } else {
-                    Some(
-                        unsafe { CStr::from_ptr(*arg) }
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
+        PROCESS_CL_ARGS
+            .get_or_init(|| {
+                // This API rewrites argc/argv in place. Windows reads argv[0]
+                // before normalizing the command line; Unix leaves it unchanged.
+                let arguments = std::env::args_os()
+                    .map(|argument| {
+                        CString::new(argument.to_string_lossy().as_bytes())
+                            .expect("process arguments cannot contain NUL bytes")
+                    })
+                    .collect::<Vec<_>>();
+                let mut pointers = arguments
+                    .iter()
+                    .map(|argument| argument.as_ptr())
+                    .chain(core::iter::once(core::ptr::null()))
+                    .collect::<Vec<_>>();
+                let mut argc = arguments
+                    .len()
+                    .try_into()
+                    .expect("process argument count fits a C int");
+                let mut argv = pointers.as_mut_ptr();
+                unsafe {
+                    sys::ireeCompilerGetProcessCLArgs(&mut argc, &mut argv);
                 }
+                if argv.is_null() || argc <= 0 {
+                    return Vec::new();
+                }
+                unsafe { core::slice::from_raw_parts(argv, argc as usize) }
+                    .iter()
+                    .filter_map(|arg| {
+                        if arg.is_null() {
+                            None
+                        } else {
+                            Some(
+                                unsafe { CStr::from_ptr(*arg) }
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            )
+                        }
+                    })
+                    .collect()
             })
-            .collect()
+            .clone()
     }
 
     /// Initializes the command line environment from an explicit argc/argv
@@ -1104,7 +1148,7 @@ impl<'a, 'b> FileOutput<'a, 'b> {
         file: &'a mut std::fs::File,
     ) -> Result<Self, CompilerError> {
         debug!("Creating file output");
-        let fd = file.as_raw_fd();
+        let fd = duplicate_output_fd(file)?;
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { sys::ireeCompilerOutputOpenFD(fd, &mut output_ptr) };
         if err_ptr.is_null() {

@@ -18,7 +18,7 @@ Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so t
 ### Supported OS
 - [x] macOS
 - [x] Linux
-- [ ] Windows
+- [x] Windows x64 (MSVC)
 - [x] Bare-metal (`no_std`; Cortex-M4 execution tested in QEMU)
 
 
@@ -70,11 +70,50 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
 
+## Releasing
+
+Pushing a `vX.Y.Z` tag runs the full Linux/macOS/Windows and bare-metal CI suite, then
+publishes to crates.io using the repository's `CARGO_REGISTRY_TOKEN` secret.
+The tag must match the version in the root `Cargo.toml`, and its commit must
+already be on `main`.
+
+Before tagging, bump the versions of changed crates, update the root
+`eerie-sys` dependency to match the native crate's version, update both
+`Cargo.lock` files (including `tests/bare-metal/Cargo.lock`), and finalize the
+changelog. For the current unreleased changes, the next versions are
+`eerie-sys 0.4.1` and `eerie 0.6.1`.
+
+```sh
+# After merging the version changes into main:
+git switch main
+git pull --ff-only
+git tag v0.6.1
+git push origin v0.6.1
+```
+
+The publish job verifies both packaged crates before uploading `eerie-sys`,
+followed by `eerie`. Already-published versions are skipped only when their
+original manifest and source files match. A reused version with different
+sources fails before either upload. If a release stops after publishing one
+crate, rerun the failed GitHub Actions run to publish the remaining crate.
+
+With the native build tools and matching IREE compiler configured, preview a
+release locally without uploading anything:
+
+```sh
+python3 tools/publish.py --dry-run v0.6.1
+```
+
 ## Installation
 The crate is divided into two sections: compiler and runtime. You can enable each functionality by toggling the "compiler" and "runtime" feature flags.
 
 ### Runtime
 Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
+
+On Windows, use the `x86_64-pc-windows-msvc` Rust target from an x64 Visual
+Studio developer shell. Install CMake, Ninja, and LLVM (including `libclang.dll`)
+and set `LIBCLANG_PATH` to LLVM's `bin` directory. The native runtime builds
+with MSVC and Ninja. Windows compiler and runtime execution are covered in CI.
 
 The runtime API is `runtime::Runtime -> Program -> Function`. It creates the
 shared VM instance, HAL device, modules, and VM context for you and serializes
@@ -198,6 +237,20 @@ rustdocflags = ["-C", "link-arg=-Wl,-rpath=/path/to/library"]
 [env]
 LIB_IREE_COMPILER = "/path/to/library"
 ```
+
+Windows (PowerShell in an x64 Visual Studio developer shell):
+
+```powershell
+python -m pip install iree-base-compiler==3.13.0 ninja
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+$env:LIB_IREE_COMPILER = python -c "import iree.compiler as c; print(c.__path__[0] + '/_mlir_libs')"
+$env:PATH = "$env:LIB_IREE_COMPILER;$env:PATH"
+cargo test --features half
+```
+
+Keep the compiler directory on `PATH` when running binaries that use the
+compiler feature. Eerie generates the MSVC import library for the wheel's
+`IREECompiler.dll` during the build.
 
 ## Development
 Use the Nix shell for the pinned C/C++ and Rust toolchain:

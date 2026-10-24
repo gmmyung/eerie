@@ -374,20 +374,24 @@ impl Device {
         out: *mut u8,
         len: usize,
     ) -> Result<(), RuntimeError> {
-        let status =
-            match self.kind {
-                DeviceKind::Inline { .. } => unsafe {
-                    sys::iree_hal_buffer_map_read(buffer, 0, out.cast(), len)
-                },
-                #[cfg(not(target_os = "none"))]
-                DeviceKind::Hal { ctx, .. } => unsafe {
-                    sys::iree_hal_device_transfer_d2h(
-                    ctx, buffer, 0, out.cast(), len,
-                    sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+        let status = match self.kind {
+            DeviceKind::Inline { .. } => unsafe {
+                sys::iree_hal_buffer_map_read(buffer, 0, out.cast(), len)
+            },
+            #[cfg(not(target_os = "none"))]
+            DeviceKind::Hal { ctx, .. } => unsafe {
+                sys::iree_hal_device_transfer_d2h(
+                    ctx,
+                    buffer,
+                    0,
+                    out.cast(),
+                    len,
+                    sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT
+                        as _,
                     infinite_timeout(),
                 )
-                },
-            };
+            },
+        };
         base::Status::from_raw(status)
             .into_result()
             .map_err(Into::into)
@@ -434,7 +438,8 @@ impl Drop for Device {
 }
 
 fn element_type_name(element_type: sys::iree_hal_element_type_t) -> &'static str {
-    match element_type {
+    // MSVC represents these enums as signed int, while the HAL ABI uses u32.
+    match element_type as sys::iree_hal_element_types_t {
         sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BOOL_8 => "bool",
         sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_UINT_8 => "u8",
         sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_UINT_16 => "u16",
@@ -462,7 +467,7 @@ macro_rules! impl_buffer_element {
     ($type:ty, $element_type:expr) => {
         impl private::Element for $type {
             const IS_RAW_STORAGE_COMPATIBLE: bool = true;
-            const IREE_ELEMENT_TYPE: u32 = $element_type;
+            const IREE_ELEMENT_TYPE: u32 = $element_type as _;
 
             fn as_bytes(data: &[Self]) -> Cow<'_, [u8]> {
                 let bytes = unsafe {
@@ -556,7 +561,7 @@ impl_buffer_element!(
 
 impl private::Element for bool {
     const IS_RAW_STORAGE_COMPATIBLE: bool = false;
-    const IREE_ELEMENT_TYPE: u32 = sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BOOL_8;
+    const IREE_ELEMENT_TYPE: u32 = sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BOOL_8 as _;
 
     fn as_bytes(data: &[Self]) -> Cow<'_, [u8]> {
         Cow::Owned(data.iter().map(|&value| u8::from(value)).collect())
@@ -633,16 +638,16 @@ impl<T: BufferElement> BufferView<T> {
                 shape.len(),
                 shape.as_ptr(),
                 T::IREE_ELEMENT_TYPE as sys::iree_hal_element_type_t,
-                sys::iree_hal_encoding_types_t_IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR,
+                sys::iree_hal_encoding_types_t_IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR as _,
                 sys::iree_hal_buffer_params_t {
-                    usage: sys::iree_hal_buffer_usage_bits_t_IREE_HAL_BUFFER_USAGE_DEFAULT,
+                    usage: sys::iree_hal_buffer_usage_bits_t_IREE_HAL_BUFFER_USAGE_DEFAULT as _,
                     access: sys::iree_hal_memory_access_bits_t_IREE_HAL_MEMORY_ACCESS_ALL as _,
-                    type_: sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL
+                    type_: (sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL
                         | if inline {
                             sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_HOST_VISIBLE
                         } else {
                             0
-                        },
+                        }) as _,
                     queue_affinity: 0,
                     min_alignment: 0,
                 },
@@ -874,7 +879,7 @@ impl Value {
         device: &Device,
     ) -> Result<Self, RuntimeError> {
         let element_type = unsafe { sys::iree_hal_buffer_view_element_type(ctx) };
-        match element_type {
+        match element_type as sys::iree_hal_element_types_t {
             sys::iree_hal_element_types_t_IREE_HAL_ELEMENT_TYPE_BOOL_8 => Ok(Value::Bool(unsafe {
                 BufferView::from_raw_retained(ctx, device)
             })),
