@@ -21,7 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.3
         with:
-          submodules: recursive
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: git -C eerie-sys/iree submodule update --init --depth 1 third_party/flatcc third_party/vulkan_headers
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v6
         with:

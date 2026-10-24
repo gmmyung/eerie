@@ -10,6 +10,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -20,7 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.3
         with:
-          submodules: recursive
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: git -C eerie-sys/iree submodule update --init --depth 1 third_party/flatcc third_party/vulkan_headers
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -73,7 +79,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.3
         with:
-          submodules: recursive
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: git -C eerie-sys/iree submodule update --init --depth 1 third_party/flatcc third_party/vulkan_headers
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf
