@@ -164,13 +164,18 @@ mod test {
         let compiler = COMPILER.lock().unwrap();
         let session = compiler.as_ref().unwrap().create_session();
         let mut invocation = session.create_invocation();
+        let directory =
+            std::env::temp_dir().join(format!("eerie-diagnostics-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
         invocation
-            .set_dump_compilation_phases_to(Path::new("/tmp/eerie-dump-phases"))
+            .set_dump_compilation_phases_to(&directory.join("phases"))
             .unwrap()
-            .setup_remarks(".*", Path::new("/tmp/eerie-remarks.yaml"))
+            .setup_remarks(".*", &directory.join("remarks.yaml"))
             .unwrap()
-            .set_crash_reproducer(Path::new("/tmp/eerie-crash-reproducer.mlir"))
+            .set_crash_reproducer(&directory.join("crash-reproducer.mlir"))
             .unwrap();
+        drop(invocation);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -254,5 +259,40 @@ mod test {
         let mut output = MemBufferOutput::new(compiler.as_ref().unwrap()).unwrap();
         output.write(b"abc").unwrap();
         assert_eq!(output.map_memory().unwrap(), b"abc");
+    }
+
+    #[test]
+    fn native_file_outputs_preserve_the_callers_file() {
+        use std::io::{Read, Seek, SeekFrom, Write};
+
+        init_compiler();
+        let compiler = COMPILER.lock().unwrap();
+        let compiler = compiler.as_ref().unwrap();
+        let directory = std::env::temp_dir().join(format!("eerie-files-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("output-Δ-😀.bin");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        {
+            let mut output = FileOutput::from_file(compiler, &mut file).unwrap();
+            output.write(b"abc").unwrap();
+        }
+        file.write_all(b"def").unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"abcdef");
+        drop(file);
+        {
+            let mut output = FileNameOutput::new(compiler, &path).unwrap();
+            output.write(b"named output").unwrap();
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), b"named output");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

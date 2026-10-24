@@ -18,7 +18,7 @@ Also, the runtime of IREE can be small as ~30KB in bare-metal environments, so t
 ### Supported OS
 - [x] macOS
 - [x] Linux
-- [ ] Windows
+- [x] Windows x64 (MSVC)
 - [x] Bare-metal (`no_std`; Cortex-M4 execution tested in QEMU)
 
 
@@ -72,7 +72,7 @@ More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
 
 ## Releasing
 
-Pushing a `vX.Y.Z` tag runs the full Linux/macOS and bare-metal CI suite, then
+Pushing a `vX.Y.Z` tag runs the full Linux/macOS/Windows and bare-metal CI suite, then
 publishes to crates.io using the repository's `CARGO_REGISTRY_TOKEN` secret.
 The tag must match the version in the root `Cargo.toml`, and its commit must
 already be on `main`.
@@ -109,6 +109,11 @@ The crate is divided into two sections: compiler and runtime. You can enable eac
 
 ### Runtime
 Eerie builds the IREE runtime from source during compilation. CMake, Clang are required.
+
+On Windows, use the `x86_64-pc-windows-msvc` Rust target from an x64 Visual
+Studio developer shell. Install CMake, Ninja, and LLVM (including `libclang.dll`)
+and set `LIBCLANG_PATH` to LLVM's `bin` directory. The native runtime builds
+with MSVC and Ninja. Windows compiler and runtime execution are covered in CI.
 
 The runtime API is `runtime::Runtime -> Program -> Function`. It creates the
 shared VM instance, HAL device, modules, and VM context for you and serializes

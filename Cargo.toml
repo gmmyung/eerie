@@ -39,6 +39,9 @@ members = [
     "eerie-sys"
 ]
 
+[target.'cfg(windows)'.dependencies]
+libc = { version = "0.2", optional = true }
+
 [dev-dependencies]
 anyhow = "1.0"
 test-log = { version = "0.2" }
@@ -47,7 +50,7 @@ env_logger = "0.11"
 [features]
 default = ["runtime", "compiler", "std"]
 runtime = ["eerie-sys/runtime", "dep:critical-section", "dep:libm", "dep:tinyrlibc"]
-compiler = ["eerie-sys/compiler", "std"]
+compiler = ["eerie-sys/compiler", "std", "dep:libc"]
 std = ["dep:thiserror", "eerie-sys/std"]
 half = ["dep:half"]
 cuda = ["eerie-sys/cuda"]

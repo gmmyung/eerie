@@ -95,6 +95,56 @@ const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
     ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
 ];
 
+#[cfg(feature = "compiler")]
+fn windows_compiler_import_library(out_path: &Path) {
+    // PyPI ships IREECompiler.dll but no import library for Rust's MSVC linker.
+    // Bindgen has already parsed the public header; use those declarations as
+    // the export list rather than depending on dumpbin output formatting.
+    let bindings =
+        std::fs::read_to_string(out_path.join("compiler/iree/compiler/embedding_api.rs"))
+            .expect("Failed to read compiler declarations");
+    let exports = bindings
+        .lines()
+        .filter_map(|line| {
+            let declaration = line.trim().strip_prefix("pub fn ireeCompiler")?;
+            Some(format!("ireeCompiler{}", declaration.split('(').next()?))
+        })
+        .collect::<Vec<_>>();
+    assert!(!exports.is_empty(), "No IREE compiler exports found");
+    let definition = out_path.join("IREECompiler.def");
+    std::fs::write(
+        &definition,
+        format!(
+            "LIBRARY IREECompiler.dll\nEXPORTS\n{}\n",
+            exports.join("\n")
+        ),
+    )
+    .expect("Failed to write compiler export list");
+    let target = env::var("TARGET").unwrap();
+    let machine = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("x86_64") => "X64",
+        Ok("aarch64") => "ARM64",
+        other => panic!("Unsupported Windows compiler architecture: {other:?}"),
+    };
+    let status = cc::windows_registry::find_tool(&target, "lib.exe")
+        .expect("MSVC lib.exe is required; initialize the Visual Studio developer environment")
+        .to_command()
+        .arg("/NOLOGO")
+        .arg(format!("/MACHINE:{machine}"))
+        .arg(format!("/DEF:{}", definition.display()))
+        .arg(format!(
+            "/OUT:{}",
+            out_path.join("IREECompiler.lib").display()
+        ))
+        .status()
+        .expect("Failed to generate IREE compiler import library");
+    assert!(
+        status.success(),
+        "Failed to generate IREE compiler import library"
+    );
+    println!("cargo:rustc-link-search={}", out_path.display());
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=LIB_IREE_COMPILER");
     println!("cargo:rerun-if-changed=CMakeLists.txt");
@@ -166,6 +216,14 @@ fn main() {
 				"The LIB_IREE_COMPILER environment variable must be set to the path to the IREE compiler library")
         };
         // The linker needs to find the IREE compiler dynamic library
+        if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+            assert_eq!(
+                env::var("CARGO_CFG_TARGET_ENV").as_deref(),
+                Ok("msvc"),
+                "Windows builds require the MSVC Rust target"
+            );
+            windows_compiler_import_library(&out_path);
+        }
         println!("cargo:rustc-link-search={}", compiler_lib_path);
         println!("cargo:rustc-link-lib=dylib=IREECompiler");
     }
@@ -176,6 +234,10 @@ fn main() {
     #[cfg(feature = "runtime")]
     {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+        let msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+        if target_os == "windows" && !msvc {
+            panic!("Windows builds require the MSVC Rust target");
+        }
         let bare_metal = target_os == "none";
         if bare_metal && cfg!(feature = "std") {
             panic!("The std feature cannot be used for target_os = \"none\"");
@@ -188,23 +250,27 @@ fn main() {
                 .join("runtime_build")
                 .join(if bare_metal { "bare_metal" } else { "hosted" });
 
-        let sysroot_output = cc::Build::new()
-            .get_compiler()
-            .to_command()
-            .arg("--print-sysroot")
-            .output()
-            .expect("Failed to execute command");
-        let sysroot = sysroot_output
-            .status
-            .success()
-            .then(|| {
-                PathBuf::from(
-                    String::from_utf8(sysroot_output.stdout)
-                        .expect("Failed to parse sysroot")
-                        .trim(),
-                )
-            })
-            .filter(|path| !path.as_os_str().is_empty());
+        let sysroot = if msvc {
+            None
+        } else {
+            let sysroot_output = cc::Build::new()
+                .get_compiler()
+                .to_command()
+                .arg("--print-sysroot")
+                .output()
+                .expect("Failed to execute command");
+            sysroot_output
+                .status
+                .success()
+                .then(|| {
+                    PathBuf::from(
+                        String::from_utf8(sysroot_output.stdout)
+                            .expect("Failed to parse sysroot")
+                            .trim(),
+                    )
+                })
+                .filter(|path| !path.as_os_str().is_empty())
+        };
         // The bare-metal build process requires runtime tools: iree-flatcc-cli and
         // iree-c-embed-data, so there has to be a host tool build before the
         // actual runtime cross-build.
@@ -230,6 +296,11 @@ fn main() {
         };
 
         let mut config = cmake::Config::new(env!("CARGO_MANIFEST_DIR"));
+        if msvc {
+            // Keep archive paths independent of Visual Studio's multi-config
+            // output directories; Ninja still uses the MSVC compiler and CRT.
+            config.generator("Ninja");
+        }
 
         // CMake config for IREE runtime build
         let mut cmake_defs = RUNTIME_CMAKE_DEFINITIONS.to_vec();
@@ -244,23 +315,25 @@ fn main() {
 
         let mut cflags = vec![];
 
-        match std::env::var("OPT_LEVEL").unwrap().as_str() {
-            "z" => {
-                cflags.push("-Oz".to_string());
+        if !msvc {
+            match std::env::var("OPT_LEVEL").unwrap().as_str() {
+                "z" => {
+                    cflags.push("-Oz".to_string());
+                }
+                "3" => {
+                    cflags.push("-O3".to_string());
+                }
+                "2" => {
+                    cflags.push("-O2".to_string());
+                }
+                "1" => {
+                    cflags.push("-O1".to_string());
+                }
+                "0" => {
+                    cflags.push("-O0".to_string());
+                }
+                _ => {}
             }
-            "3" => {
-                cflags.push("-O3".to_string());
-            }
-            "2" => {
-                cflags.push("-O2".to_string());
-            }
-            "1" => {
-                cflags.push("-O1".to_string());
-            }
-            "0" => {
-                cflags.push("-O0".to_string());
-            }
-            _ => {}
         }
 
         // If bare metal, use the following config.
@@ -394,12 +467,25 @@ fn main() {
                 println!("cargo:rustc-link-lib=framework=Metal");
             }
 
+            "windows" => {
+                for library in [
+                    "kernel32",
+                    "advapi32",
+                    "bcrypt",
+                    "ws2_32",
+                    "synchronization",
+                    "dbghelp",
+                ] {
+                    println!("cargo:rustc-link-lib={library}");
+                }
+            }
+
             "none" => {
                 // Rust's compiler_builtins supplies target ABI helpers without
                 // pulling in libgcc's hosted unwinder or a C runtime.
             }
             _ => {
-                panic!("Only Linux, macOS, and no-std targets are supported");
+                panic!("Only Linux, macOS, Windows MSVC, and no-std targets are supported");
             }
         }
     }

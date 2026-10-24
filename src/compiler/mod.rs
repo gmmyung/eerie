@@ -1,10 +1,13 @@
 use eerie_sys::compiler as sys;
 use log::debug;
+#[cfg(unix)]
+use std::os::fd::IntoRawFd;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, IntoRawHandle};
 use std::{
     ffi::{CStr, CString},
     fmt::{Debug, Display, Formatter},
     marker::{PhantomData, PhantomPinned},
-    os::fd::AsRawFd,
     path::Path,
     pin::Pin,
     sync::{Mutex, OnceLock},
@@ -48,6 +51,26 @@ struct SourceCapture {
 
 fn path_to_cstring(path: &Path) -> Result<CString, CompilerError> {
     CString::new(path.to_string_lossy().as_bytes()).map_err(Into::into)
+}
+
+// IREE's ToolOutputFile closes the descriptor when destroyed. Give it an
+// independent descriptor so the caller's Rust File remains usable.
+fn duplicate_output_fd(file: &std::fs::File) -> Result<i32, std::io::Error> {
+    let duplicate = file.try_clone()?;
+    #[cfg(unix)]
+    return Ok(duplicate.into_raw_fd());
+    #[cfg(windows)]
+    {
+        let descriptor = unsafe {
+            libc::open_osfhandle(duplicate.as_raw_handle() as libc::intptr_t, libc::O_BINARY)
+        };
+        if descriptor == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // The CRT descriptor now owns this duplicated Windows handle.
+        let _ = duplicate.into_raw_handle();
+        Ok(descriptor)
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -1104,7 +1127,7 @@ impl<'a, 'b> FileOutput<'a, 'b> {
         file: &'a mut std::fs::File,
     ) -> Result<Self, CompilerError> {
         debug!("Creating file output");
-        let fd = file.as_raw_fd();
+        let fd = duplicate_output_fd(file)?;
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { sys::ireeCompilerOutputOpenFD(fd, &mut output_ptr) };
         if err_ptr.is_null() {

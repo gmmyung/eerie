@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Windows x64 MSVC compiler/runtime support and CI coverage, including automatic compiler import-library generation for the PyPI wheel.
 - Added tag-triggered crates.io publishing with full CI validation, dependency ordering, and source-verified retries using `CARGO_REGISTRY_TOKEN`.
 - Added `Compiler::compile_file`, `compile_str`, and `compile_bytes` for compiling directly to owned VMFB archives with per-call flags.
 - Added `Function::invoke_one` for a single typed output, with result-count validation before invocation.
@@ -17,6 +18,7 @@
 
 ### Fixed
 
+- Give compiler file outputs their own descriptor so destroying an output preserves the caller's Rust file; support Windows CRT descriptors and Unicode output paths.
 - Validate global compiler command-line arguments before consuming the one-time initialization slot, allowing a valid retry after an interior-NUL error.
 
 ## 0.6.0 - 2026-10-24

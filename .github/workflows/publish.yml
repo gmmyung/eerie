@@ -57,12 +57,7 @@ jobs:
       - name: Install matching IREE compiler
         run: python -m pip install iree-base-compiler==3.13.0
       - name: Configure compiler library
-        run: |
-          library_path=$(python -c 'import iree.compiler as c; print(f"{c.__path__[0]}/_mlir_libs")')
-          {
-            echo "LIB_IREE_COMPILER=$library_path"
-            echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,$library_path"
-          } >> "$GITHUB_ENV"
+        run: python tools/configure-compiler.py
       - name: Verify packages and publish in dependency order
         env:
           RELEASE_TAG: ${{ github.ref_name }}

@@ -165,6 +165,7 @@ dependencies = [
  "eerie-sys",
  "env_logger",
  "half",
+ "libc",
  "libm",
  "log",
  "test-log",
