@@ -70,6 +70,40 @@ fn run_vmfb(vmfb: &[u8]) -> Vec<f32> {
 ```
 More examples [here](https://github.com/gmmyung/eerie/tree/main/examples)
 
+## Releasing
+
+Pushing a `vX.Y.Z` tag runs the full Linux/macOS and bare-metal CI suite, then
+publishes to crates.io using the repository's `CARGO_REGISTRY_TOKEN` secret.
+The tag must match the version in the root `Cargo.toml`, and its commit must
+already be on `main`.
+
+Before tagging, bump the versions of changed crates, update the root
+`eerie-sys` dependency to match the native crate's version, update both
+`Cargo.lock` files (including `tests/bare-metal/Cargo.lock`), and finalize the
+changelog. For the current unreleased changes, the next versions are
+`eerie-sys 0.4.1` and `eerie 0.6.1`.
+
+```sh
+# After merging the version changes into main:
+git switch main
+git pull --ff-only
+git tag v0.6.1
+git push origin v0.6.1
+```
+
+The publish job verifies both packaged crates before uploading `eerie-sys`,
+followed by `eerie`. Already-published versions are skipped only when their
+original manifest and source files match. A reused version with different
+sources fails before either upload. If a release stops after publishing one
+crate, rerun the failed GitHub Actions run to publish the remaining crate.
+
+With the native build tools and matching IREE compiler configured, preview a
+release locally without uploading anything:
+
+```sh
+python3 tools/publish.py --dry-run v0.6.1
+```
+
 ## Installation
 The crate is divided into two sections: compiler and runtime. You can enable each functionality by toggling the "compiler" and "runtime" feature flags.
 

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added tag-triggered crates.io publishing with full CI validation, dependency ordering, and source-verified retries using `CARGO_REGISTRY_TOKEN`.
 - Added `Compiler::compile_file`, `compile_str`, and `compile_bytes` for compiling directly to owned VMFB archives with per-call flags.
 - Added `Function::invoke_one` for a single typed output, with result-count validation before invocation.
 - Added `BufferView::read_into` for reusing host storage, plus allocation-free `rank`, `element_count`, and `byte_length` metadata queries.

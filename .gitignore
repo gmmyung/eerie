@@ -2,6 +2,7 @@ target
 .DS_Store
 .vscode
 .venv
+__pycache__/
 .cargo
 !tests/bare-metal/.cargo/
 !tests/bare-metal/.cargo/config.toml
