@@ -10,9 +10,13 @@ use std::{
     marker::{PhantomData, PhantomPinned},
     path::Path,
     pin::Pin,
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, OnceLock, RwLock, RwLockReadGuard},
 };
 use thiserror::Error;
+
+mod loader;
+use loader::api;
+pub use loader::CompilerLoadError;
 
 /// Errors from the IREE compiler
 pub struct Error {
@@ -21,9 +25,9 @@ pub struct Error {
 
 impl Error {
     fn from_ptr(ptr: *mut sys::iree_compiler_error_t) -> Self {
-        let c_str = unsafe { std::ffi::CStr::from_ptr(sys::ireeCompilerErrorGetMessage(ptr)) };
+        let c_str = unsafe { std::ffi::CStr::from_ptr(api().ireeCompilerErrorGetMessage(ptr)) };
         let message = c_str.to_string_lossy().into_owned();
-        unsafe { sys::ireeCompilerErrorDestroy(ptr) }
+        unsafe { api().ireeCompilerErrorDestroy(ptr) }
         Self { message }
     }
 }
@@ -93,35 +97,66 @@ impl std::error::Error for Error {}
 /// previously exposed functionality. A major version bump implies an API
 /// break and no forward or backward compatibility is assumed across major
 /// versions.
+/// # Panics
+///
+/// Panics if the compiler cannot be discovered or loaded. Use `Compiler::new`
+/// and `Compiler::api_version` for fallible discovery.
 pub fn get_api_version() -> (u16, u16) {
-    let version_bytes = unsafe { sys::ireeCompilerGetAPIVersion() } as u32;
-    let major = (version_bytes >> 16) as u16;
-    let minor = (version_bytes & 0xFFFF) as u16;
-    (major, minor)
+    Compiler::new()
+        .expect("could not load IREE compiler; use Compiler::new() to handle discovery errors")
+        .api_version()
 }
 
-static IS_INITIALIZED: OnceLock<()> = OnceLock::new();
 static GLOBAL_CL_IS_SET: OnceLock<()> = OnceLock::new();
 static PROCESS_CL_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+static GLOBAL_CONFIGURATION: RwLock<()> = RwLock::new(());
 
-/// The IREE compiler. The compiler is globally initialized when it is created. It can not be
-/// instantiated more than once.
-pub struct Compiler {}
+/// An embedded IREE compiler handle.
+///
+/// `new` discovers the installed compiler library automatically. Handles share
+/// process-wide initialization and may be created, cloned, and dropped freely;
+/// each session and convenience compilation has its own options and context.
+#[derive(Clone)]
+pub struct Compiler {
+    state: &'static loader::LoadedCompiler,
+}
+
+impl Debug for Compiler {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Compiler")
+            .field("library", &self.library_path())
+            .field("api_version", &self.api_version())
+            .finish()
+    }
+}
 
 impl Compiler {
-    /// Create a new IREE compiler.
-    /// This should only be called once through the lifetime of the program.
+    /// Discovers and loads IREE from the active Python environment or the system
+    /// library search path. Install `iree-base-compiler==3.13.0` with pip first.
+    /// No linker flags or library-path environment variables are required.
     pub fn new() -> Result<Self, CompilerError> {
-        match IS_INITIALIZED.set(()) {
-            Ok(_) => {
-                unsafe {
-                    debug!("Global initializing compiler");
-                    sys::ireeCompilerGlobalInitialize();
-                }
-                Ok(Self {})
-            }
-            Err(_) => Err(CompilerError::AlreadyInitialized),
-        }
+        Ok(Self {
+            state: loader::load(None)?,
+        })
+    }
+
+    /// Loads a custom compiler library file or a directory containing it.
+    /// Only one compiler library may be loaded by eerie in a process.
+    pub fn with_library(path: impl AsRef<Path>) -> Result<Self, CompilerError> {
+        Ok(Self {
+            state: loader::load(Some(path.as_ref()))?,
+        })
+    }
+
+    /// The compiler library selected during discovery or explicit loading.
+    pub fn library_path(&self) -> &Path {
+        &self.state.path
+    }
+
+    /// The embedding API version exported by the loaded compiler.
+    pub fn api_version(&self) -> (u16, u16) {
+        let version = unsafe { self.state.api.ireeCompilerGetAPIVersion() } as u32;
+        ((version >> 16) as u16, version as u16)
     }
 
     /// Gets the build revision of the IREE compiler. In official releases, this
@@ -129,7 +164,7 @@ impl Compiler {
     /// empty string. The returned is valid for as long as the compiler is
     /// initialized.
     pub fn get_revision(&self) -> Result<String, CompilerError> {
-        let rev_str = unsafe { std::ffi::CStr::from_ptr(sys::ireeCompilerGetRevision()) };
+        let rev_str = unsafe { std::ffi::CStr::from_ptr(api().ireeCompilerGetRevision()) };
         Ok(rev_str.to_string_lossy().into_owned())
     }
 
@@ -156,7 +191,7 @@ impl Compiler {
                     .expect("process argument count fits a C int");
                 let mut argv = pointers.as_mut_ptr();
                 unsafe {
-                    sys::ireeCompilerGetProcessCLArgs(&mut argc, &mut argv);
+                    api().ireeCompilerGetProcessCLArgs(&mut argc, &mut argv);
                 }
                 if argv.is_null() || argc <= 0 {
                     return Vec::new();
@@ -194,11 +229,16 @@ impl Compiler {
             .iter()
             .map(|arg| CString::new(arg.as_str()))
             .collect::<Result<Vec<_>, _>>()?;
+        // Cloned handles must not change process-wide options while another
+        // handle has sessions using them. New sessions wait for setup to finish.
+        let _configuration = GLOBAL_CONFIGURATION
+            .try_write()
+            .map_err(|_| CompilerError::GlobalCLInUse)?;
         let mut ptr_array = c_str_vec.iter().map(|arg| arg.as_ptr()).collect::<Vec<_>>();
         match GLOBAL_CL_IS_SET.set(()) {
             Ok(_) => {
                 unsafe {
-                    sys::ireeCompilerSetupGlobalCL(
+                    api().ireeCompilerSetupGlobalCL(
                         argv.len() as i32,
                         ptr_array.as_mut_ptr(),
                         c"IREE Compiler".as_ptr(),
@@ -230,7 +270,7 @@ impl Compiler {
         let mut registered_hal_target_backends = StringCapture { values: Vec::new() };
         debug!("Enumerating registered HAL target backends");
         unsafe {
-            sys::ireeCompilerEnumerateRegisteredHALTargetBackends(
+            api().ireeCompilerEnumerateRegisteredHALTargetBackends(
                 Some(Self::capture_registered_hal_target_backend_callback),
                 &mut registered_hal_target_backends as *mut StringCapture as *mut _,
             );
@@ -256,7 +296,7 @@ impl Compiler {
         let mut plugins = StringCapture { values: Vec::new() };
         debug!("Enumerating plugins");
         unsafe {
-            sys::ireeCompilerEnumeratePlugins(
+            api().ireeCompilerEnumeratePlugins(
                 Some(Self::capture_plugin_callback),
                 &mut plugins as *mut StringCapture as *mut _,
             );
@@ -335,15 +375,6 @@ impl Compiler {
     }
 }
 
-impl Drop for Compiler {
-    fn drop(&mut self) {
-        unsafe {
-            debug!("Global shutting down compiler");
-            sys::ireeCompilerGlobalShutdown();
-        }
-    }
-}
-
 /// A session represents a scope where one or more runs can be executed.
 /// Internally, it consists of an MLIRContext and a private set of session
 /// options. If the CL environment was initialized, session options will be
@@ -351,19 +382,24 @@ impl Drop for Compiler {
 pub struct Session<'a> {
     ctx: *mut sys::iree_compiler_session_t,
     _compiler: &'a Compiler,
+    _configuration: RwLockReadGuard<'static, ()>,
 }
 
 impl<'a> Session<'a> {
     /// Creates a new session.
     pub fn new(compiler: &'a Compiler) -> Self {
+        let configuration = GLOBAL_CONFIGURATION
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
         let ctx: *mut sys::iree_compiler_session_t;
         unsafe {
             debug!("Creating session");
-            ctx = sys::ireeCompilerSessionCreate();
+            ctx = api().ireeCompilerSessionCreate();
         }
         Self {
             ctx,
             _compiler: compiler,
+            _configuration: configuration,
         }
     }
 
@@ -378,7 +414,7 @@ impl<'a> Session<'a> {
         unsafe {
             debug!("Setting session flags");
             err_ptr =
-                sys::ireeCompilerSessionSetFlags(self.ctx, argv.len() as i32, ptr_array.as_ptr());
+                api().ireeCompilerSessionSetFlags(self.ctx, argv.len() as i32, ptr_array.as_ptr());
             debug!("Session flags set");
         }
         if err_ptr.is_null() {
@@ -411,7 +447,7 @@ impl<'a> Session<'a> {
         let mut flags = StringCapture { values: Vec::new() };
         debug!("Getting session flags");
         unsafe {
-            sys::ireeCompilerSessionGetFlags(
+            api().ireeCompilerSessionGetFlags(
                 self.ctx,
                 non_default_only,
                 Some(Self::capture_flags_callback),
@@ -457,7 +493,7 @@ impl Drop for Session<'_> {
     fn drop(&mut self) {
         unsafe {
             debug!("Destroying session");
-            sys::ireeCompilerSessionDestroy(self.ctx);
+            api().ireeCompilerSessionDestroy(self.ctx);
         }
     }
 }
@@ -583,11 +619,11 @@ impl<'a> Invocation<'a> {
         let ctx: *mut sys::iree_compiler_invocation_t;
         unsafe {
             debug!("Creating invocation");
-            ctx = sys::ireeCompilerInvocationCreate(session.ctx);
+            ctx = api().ireeCompilerInvocationCreate(session.ctx);
         }
         let diagnostic_queue = Box::pin(Diagnostics::new(Vec::new()));
         unsafe {
-            sys::ireeCompilerInvocationEnableCallbackDiagnostics(
+            api().ireeCompilerInvocationEnableCallbackDiagnostics(
                 ctx,
                 0,
                 Some(Self::capture_diagnostics_callback),
@@ -645,7 +681,7 @@ impl<'a> Invocation<'a> {
     pub fn enable_console_diagnostics(&mut self) -> &mut Self {
         debug!("Enabling console diagnostics");
         unsafe {
-            sys::ireeCompilerInvocationEnableConsoleDiagnostics(self.ctx);
+            api().ireeCompilerInvocationEnableConsoleDiagnostics(self.ctx);
         }
         self
     }
@@ -659,7 +695,7 @@ impl<'a> Invocation<'a> {
                 return core::ptr::null_mut();
             }
             let path = unsafe { &*(user_data as *const CString) };
-            unsafe { sys::ireeCompilerOutputOpenFile(path.as_ptr(), out_output) }
+            unsafe { api().ireeCompilerOutputOpenFile(path.as_ptr(), out_output) }
         }));
         result.unwrap_or(core::ptr::null_mut())
     }
@@ -673,7 +709,7 @@ impl<'a> Invocation<'a> {
             .expect("crash reproducer path was just set") as *const CString
             as *mut _;
         unsafe {
-            sys::ireeCompilerInvocationSetCrashHandler(
+            api().ireeCompilerInvocationSetCrashHandler(
                 self.ctx,
                 true,
                 Some(Self::crash_reproducer_callback),
@@ -690,7 +726,7 @@ impl<'a> Invocation<'a> {
     ) -> Result<&mut Self, CompilerError> {
         self.dump_compilation_phases_to = Some(path_to_cstring(path)?);
         unsafe {
-            sys::ireeCompilerInvocationSetDumpCompilationPhasesTo(
+            api().ireeCompilerInvocationSetDumpCompilationPhasesTo(
                 self.ctx,
                 self.dump_compilation_phases_to
                     .as_ref()
@@ -710,7 +746,7 @@ impl<'a> Invocation<'a> {
         self.remarks_filter = Some(CString::new(filter)?);
         self.remarks_output_file = Some(path_to_cstring(output_file)?);
         unsafe {
-            sys::ireeCompilerInvocationSetupRemarks(
+            api().ireeCompilerInvocationSetupRemarks(
                 self.ctx,
                 self.remarks_filter
                     .as_ref()
@@ -730,7 +766,7 @@ impl<'a> Invocation<'a> {
     pub fn parse_source(&mut self, source: Source) -> Result<&mut Self, CompilerError> {
         self.diagnostic_queue.clear();
         debug!("Parsing source");
-        match unsafe { sys::ireeCompilerInvocationParseSource(self.ctx, source.ctx) } {
+        match unsafe { api().ireeCompilerInvocationParseSource(self.ctx, source.ctx) } {
             true => Ok(self),
             false => Err(CompilerError::IREECompilerDiagnosticsError(
                 self.diagnostic_queue.as_ref().get_ref().clone(),
@@ -749,7 +785,7 @@ impl<'a> Invocation<'a> {
     pub fn set_compile_from_phase(&mut self, phase: &str) -> Result<&mut Self, CompilerError> {
         debug!("Setting compile from phase");
         let phase = CString::new(phase)?;
-        unsafe { sys::ireeCompilerInvocationSetCompileFromPhase(self.ctx, phase.as_ptr()) }
+        unsafe { api().ireeCompilerInvocationSetCompileFromPhase(self.ctx, phase.as_ptr()) }
         Ok(self)
     }
 
@@ -759,14 +795,14 @@ impl<'a> Invocation<'a> {
     pub fn set_compile_to_phase(&mut self, phase: &str) -> Result<&mut Self, CompilerError> {
         debug!("Setting compile to phase");
         let phase = CString::new(phase)?;
-        unsafe { sys::ireeCompilerInvocationSetCompileToPhase(self.ctx, phase.as_ptr()) }
+        unsafe { api().ireeCompilerInvocationSetCompileToPhase(self.ctx, phase.as_ptr()) }
         Ok(self)
     }
 
     /// Enables/disables verification of IR after each pass. Defaults to enabled.
     pub fn set_verify_ir(&mut self, enable: bool) -> &mut Self {
         debug!("Setting verify IR");
-        unsafe { sys::ireeCompilerInvocationSetVerifyIR(self.ctx, enable) }
+        unsafe { api().ireeCompilerInvocationSetVerifyIR(self.ctx, enable) }
         self
     }
 
@@ -774,7 +810,7 @@ impl<'a> Invocation<'a> {
     pub fn pipeline(&mut self, pipeline: Pipeline) -> Result<&mut Self, CompilerError> {
         self.diagnostic_queue.clear();
         debug!("Running pipeline");
-        match unsafe { sys::ireeCompilerInvocationPipeline(self.ctx, pipeline.into()) } {
+        match unsafe { api().ireeCompilerInvocationPipeline(self.ctx, pipeline.into()) } {
             true => Ok(self),
             false => Err(CompilerError::IREECompilerDiagnosticsError(
                 self.diagnostic_queue.as_ref().get_ref().clone(),
@@ -791,7 +827,7 @@ impl<'a> Invocation<'a> {
         debug!("Running pass pipeline");
         let text_pass_pipeline = CString::new(text_pass_pipeline)?;
         match unsafe {
-            sys::ireeCompilerInvocationRunPassPipeline(self.ctx, text_pass_pipeline.as_ptr())
+            api().ireeCompilerInvocationRunPassPipeline(self.ctx, text_pass_pipeline.as_ptr())
         } {
             true => Ok(self),
             false => Err(CompilerError::IREECompilerDiagnosticsError(
@@ -805,7 +841,7 @@ impl<'a> Invocation<'a> {
         debug!("Outputting IR");
         self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
-        let err_ptr = unsafe { sys::ireeCompilerInvocationOutputIR(self.ctx, output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerInvocationOutputIR(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
@@ -828,7 +864,7 @@ impl<'a> Invocation<'a> {
         self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
         let err_ptr = unsafe {
-            sys::ireeCompilerInvocationOutputIRBytecode(self.ctx, output_ptr, bytecode_version)
+            api().ireeCompilerInvocationOutputIRBytecode(self.ctx, output_ptr, bytecode_version)
         };
         if err_ptr.is_null() {
             Ok(self)
@@ -848,7 +884,7 @@ impl<'a> Invocation<'a> {
         debug!("Outputting VM byte code");
         self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
-        let err_ptr = unsafe { sys::ireeCompilerInvocationOutputVMBytecode(self.ctx, output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerInvocationOutputVMBytecode(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
@@ -867,7 +903,7 @@ impl<'a> Invocation<'a> {
         debug!("Outputting VM source");
         self.diagnostic_queue.clear();
         let output_ptr = output.as_ptr();
-        let err_ptr = unsafe { sys::ireeCompilerInvocationOutputVMCSource(self.ctx, output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerInvocationOutputVMCSource(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
@@ -886,7 +922,7 @@ impl<'a> Invocation<'a> {
         debug!("Outputting HAL executable");
         let output_ptr = output.as_ptr();
         let err_ptr =
-            unsafe { sys::ireeCompilerInvocationOutputHALExecutable(self.ctx, output_ptr) };
+            unsafe { api().ireeCompilerInvocationOutputHALExecutable(self.ctx, output_ptr) };
         if err_ptr.is_null() {
             Ok(self)
         } else {
@@ -902,7 +938,7 @@ impl Drop for Invocation<'_> {
     fn drop(&mut self) {
         unsafe {
             debug!("Destroying invocation");
-            sys::ireeCompilerInvocationDestroy(self.ctx);
+            api().ireeCompilerInvocationDestroy(self.ctx);
         }
     }
 }
@@ -934,7 +970,7 @@ impl<'a, 'b> Source<'a, 'b> {
         let mut source_ptr = std::ptr::null_mut();
         let err_ptr = unsafe {
             debug!("Opening file");
-            sys::ireeCompilerSourceOpenFile(session.ctx, file.as_ptr(), &mut source_ptr)
+            api().ireeCompilerSourceOpenFile(session.ctx, file.as_ptr(), &mut source_ptr)
         };
         if err_ptr.is_null() {
             Ok(Source {
@@ -960,7 +996,7 @@ impl<'a, 'b> Source<'a, 'b> {
         let mut source_ptr = std::ptr::null_mut();
         debug!("len: {}", buf.len());
         let err_ptr = unsafe {
-            sys::ireeCompilerSourceWrapBuffer(
+            api().ireeCompilerSourceWrapBuffer(
                 session.ctx,
                 buf_name.as_ptr(),
                 buf.as_ptr() as *const core::ffi::c_char,
@@ -1019,7 +1055,7 @@ impl<'a, 'b> Source<'a, 'b> {
         debug!("Splitting source");
         let mut sources = SourceCapture { values: Vec::new() };
         let err_ptr = unsafe {
-            sys::ireeCompilerSourceSplit(
+            api().ireeCompilerSourceSplit(
                 self.ctx,
                 Some(Self::split_callback),
                 &mut sources as *mut SourceCapture as *mut std::ffi::c_void,
@@ -1048,7 +1084,7 @@ impl Drop for Source<'_, '_> {
     fn drop(&mut self) {
         unsafe {
             debug!("Destroying source");
-            sys::ireeCompilerSourceDestroy(self.ctx);
+            api().ireeCompilerSourceDestroy(self.ctx);
         }
     }
 }
@@ -1059,7 +1095,7 @@ pub trait Output {
 
     fn write(&mut self, data: &[u8]) -> Result<(), CompilerError> {
         let err_ptr = unsafe {
-            sys::ireeCompilerOutputWrite(
+            api().ireeCompilerOutputWrite(
                 self.as_ptr(),
                 data.as_ptr() as *const std::ffi::c_void,
                 data.len(),
@@ -1091,8 +1127,8 @@ impl Output for FileNameOutput<'_> {
 impl Drop for FileNameOutput<'_> {
     fn drop(&mut self) {
         unsafe {
-            sys::ireeCompilerOutputKeep(self.ctx);
-            sys::ireeCompilerOutputDestroy(self.ctx);
+            api().ireeCompilerOutputKeep(self.ctx);
+            api().ireeCompilerOutputDestroy(self.ctx);
         }
     }
 }
@@ -1103,7 +1139,7 @@ impl<'a> FileNameOutput<'a> {
         debug!("Creating filename output");
         let path = path_to_cstring(path)?;
         let mut output_ptr = std::ptr::null_mut();
-        let err_ptr = unsafe { sys::ireeCompilerOutputOpenFile(path.as_ptr(), &mut output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerOutputOpenFile(path.as_ptr(), &mut output_ptr) };
         if err_ptr.is_null() {
             Ok(FileNameOutput {
                 ctx: output_ptr,
@@ -1134,8 +1170,8 @@ impl Output for FileOutput<'_, '_> {
 impl Drop for FileOutput<'_, '_> {
     fn drop(&mut self) {
         unsafe {
-            sys::ireeCompilerOutputKeep(self.ctx);
-            sys::ireeCompilerOutputDestroy(self.ctx);
+            api().ireeCompilerOutputKeep(self.ctx);
+            api().ireeCompilerOutputDestroy(self.ctx);
         }
     }
 }
@@ -1150,7 +1186,7 @@ impl<'a, 'b> FileOutput<'a, 'b> {
         debug!("Creating file output");
         let fd = duplicate_output_fd(file)?;
         let mut output_ptr = std::ptr::null_mut();
-        let err_ptr = unsafe { sys::ireeCompilerOutputOpenFD(fd, &mut output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerOutputOpenFD(fd, &mut output_ptr) };
         if err_ptr.is_null() {
             Ok(FileOutput {
                 ctx: output_ptr,
@@ -1182,7 +1218,7 @@ impl Drop for MemBufferOutput<'_> {
     fn drop(&mut self) {
         unsafe {
             debug!("Destroying membuffer output");
-            sys::ireeCompilerOutputDestroy(self.ctx);
+            api().ireeCompilerOutputDestroy(self.ctx);
         }
     }
 }
@@ -1192,7 +1228,7 @@ impl<'a> MemBufferOutput<'a> {
     pub fn new(compiler: &'a Compiler) -> Result<Self, CompilerError> {
         debug!("Creating membuffer output");
         let mut output_ptr = std::ptr::null_mut();
-        let err_ptr = unsafe { sys::ireeCompilerOutputOpenMembuffer(&mut output_ptr) };
+        let err_ptr = unsafe { api().ireeCompilerOutputOpenMembuffer(&mut output_ptr) };
         if err_ptr.is_null() {
             Ok(MemBufferOutput {
                 ctx: output_ptr,
@@ -1212,7 +1248,7 @@ impl<'a> MemBufferOutput<'a> {
         let mut data_ptr = std::ptr::null_mut();
         let mut data_length = 0;
         let err_ptr =
-            unsafe { sys::ireeCompilerOutputMapMemory(self.ctx, &mut data_ptr, &mut data_length) };
+            unsafe { api().ireeCompilerOutputMapMemory(self.ctx, &mut data_ptr, &mut data_length) };
         if err_ptr.is_null() {
             Ok(unsafe {
                 std::slice::from_raw_parts(data_ptr as *const u8, data_length.try_into().unwrap())
@@ -1228,10 +1264,14 @@ impl<'a> MemBufferOutput<'a> {
 
 #[derive(Error, Debug)]
 pub enum CompilerError {
+    #[error(transparent)]
+    CompilerLoadError(#[from] CompilerLoadError),
     #[error("Compiler initialized more than once")]
     AlreadyInitialized,
     #[error("Global CL already set")]
     GlobalCLAlreadySet,
+    #[error("Global command-line setup requires all compiler sessions to be dropped")]
+    GlobalCLInUse,
     #[error("CString contains a null byte")]
     NulError(#[from] std::ffi::NulError),
     #[error("Invalid UTF-8 sequence")]

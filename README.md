@@ -6,15 +6,18 @@ Rust bindings for [IREE](https://iree.dev): compile MLIR to VMFB modules and run
 inference on CPUs, GPUs, or embedded devices. Supports Linux, macOS, Windows x64
 (MSVC), and `no_std` targets.
 
-The API is experimental and may change between releases. Eerie 0.6 uses
+The API is experimental and may change between releases. Eerie 0.7 uses
 **IREE 3.13.0**; use the matching compiler library and recompile models generated
 by IREE 3.11 or earlier.
+
+Using Melior and Eerie in one process remains unsupported on macOS with stock
+compiler wheels because their LLVM/MLIR symbols can collide.
 
 ## Installation
 
 ```toml
 [dependencies]
-eerie = "0.6.1"
+eerie = "0.7.0"
 ```
 
 The default features enable `compiler`, `runtime`, and `std`. To run precompiled
@@ -22,7 +25,7 @@ models without the compiler library:
 
 ```toml
 [dependencies]
-eerie = { version = "0.6.1", default-features = false, features = ["std", "runtime"] }
+eerie = { version = "0.7.0", default-features = false, features = ["std", "runtime"] }
 ```
 
 Building the runtime requires **CMake 3.26+** and **Clang/libclang**. On macOS,
@@ -38,23 +41,13 @@ The `compiler` feature requires the IREE shared library. Install it with:
 python -m pip install iree-base-compiler==3.13.0
 ```
 
-On Linux and macOS, configure its location for building and running your app:
+`Compiler::new()` discovers the library in your active Python environment and
+loads it automatically. Building your Rust project requires no compiler library
+paths or linker configuration.
 
-```sh
-export LIB_IREE_COMPILER=$(python -c 'import iree.compiler as c; print(c.__path__[0] + "/_mlir_libs")')
-export RUSTFLAGS="-C link-arg=-Wl,-rpath,$LIB_IREE_COMPILER"
-export RUSTDOCFLAGS="$RUSTFLAGS"
-```
-
-On Windows, use PowerShell in the developer shell:
-
-```powershell
-$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
-$env:LIB_IREE_COMPILER = python -c "import iree.compiler as c; print(c.__path__[0] + '/_mlir_libs')"
-$env:PATH = "$env:LIB_IREE_COMPILER;$env:PATH"
-```
-
-Keep the compiler directory on `PATH` when running your Windows app.
+For custom builds, use `Compiler::with_library(path)` with a library file or its
+directory. If you have multiple Python installations, `EERIE_PYTHON` can select
+the Python executable used for discovery.
 
 ## Compile and run a model
 
@@ -83,8 +76,8 @@ fn compile_model() -> Result<Vec<u8>, eerie::compiler::CompilerError> {
 }
 ```
 
-Reuse a `Compiler` for multiple models. `compile_str` accepts MLIR text, and
-`compile_bytes` accepts MLIR text or bytecode.
+Compiler handles can be created, cloned, and reused for multiple models.
+`compile_str` accepts MLIR text, and `compile_bytes` accepts MLIR text or bytecode.
 
 Load the bytes, create input buffers, and invoke the function:
 

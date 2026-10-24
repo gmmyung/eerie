@@ -19,8 +19,22 @@ mod test {
     #[test]
     fn test_compiler() {
         init_compiler();
-        let compiler = Compiler::new();
-        assert!(compiler.is_err());
+        let _guard = COMPILER.lock().unwrap();
+        let first = Compiler::new().unwrap();
+        let path = first.library_path().to_owned();
+        drop(first);
+        let second = Compiler::with_library(&path).unwrap();
+        assert_eq!(second.library_path(), path);
+        assert_eq!(second.api_version(), (1, 4));
+        let clone = second.clone();
+        drop(second);
+        assert!(!clone
+            .compile_str(
+                include_str!("mul.mlir"),
+                ["--iree-hal-target-backends=vmvx"]
+            )
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

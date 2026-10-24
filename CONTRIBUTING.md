@@ -15,7 +15,7 @@ cargo check --locked --no-default-features --features runtime
 python tools/regenerate-fixtures.py --check
 ```
 
-Without Nix, install the native dependencies and configure the compiler library
+Without Nix, install the native dependencies and the compiler Python package
 as described in the [README](README.md). Windows builds need an x64 Visual Studio
 developer shell, Ninja, and LLVM.
 
@@ -40,6 +40,12 @@ The Rust workflow covers Linux, macOS, Windows x64 MSVC, and Cortex-M execution.
 It checks default, runtime-only, compiler-only, and no_std builds, fixture
 reproducibility, offline runtime documentation, and packaged raw bindings.
 Windows exercises debug and release builds, plus static CRT linkage.
+
+The separate Melior regression uses LLVM/MLIR 22 and checks both initialization
+orders in the same process. Run it with `nix develop .#melior -c python tools/test-melior.py`.
+CI runs it on Linux. Stock macOS compiler wheels still allow LLVM/MLIR weak
+symbols to bind to the host's implementation; local runtime loading does not
+isolate those symbols, so this configuration remains unsupported on macOS.
 
 Run the standalone Cortex-M test with the Rust `thumbv7em-none-eabihf` target,
 Arm GNU toolchain, Clang/libclang, CMake, and `qemu-system-arm` on `PATH`:
@@ -77,11 +83,11 @@ be on `main`.
 Before tagging:
 
 1. Bump the versions of changed crates and update the root `eerie-sys` dependency.
-2. Update both `Cargo.lock` files, including `tests/bare-metal/Cargo.lock`.
+2. Update the workspace and standalone test `Cargo.lock` files in `tests/bare-metal` and `tests/melior`.
 3. Finalize `CHANGELOG.md` and merge the version changes into `main`.
 
 The crate versions may differ; the tag always uses the `eerie` version.
-With the native tools and matching compiler configured, preview the release
+With the native tools and matching compiler installed, preview the release
 without uploading anything (replace the version with the intended release):
 
 ```sh

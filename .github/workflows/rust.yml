@@ -67,10 +67,16 @@ jobs:
       - name: Install native dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake ninja-build
+      - name: Configure Windows native build
+        if: runner.os == 'Windows'
+        run: |
+          $llvm = if ($env:LLVM_PATH) { $env:LLVM_PATH } else { 'C:\Program Files\LLVM' }
+          "LIBCLANG_PATH=$llvm\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'CARGO_TARGET_DIR=C:\t' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Check compiler build before installing its library
+        run: cargo check --locked --no-default-features --features compiler
       - name: Install matching IREE compiler
         run: python -m pip install iree-base-compiler==3.13.0
-      - name: Configure compiler library
-        run: python tools/configure-compiler.py
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check fixture reproducibility
@@ -91,15 +97,13 @@ jobs:
         run: |
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
           cargo test --locked --release --features vulkan integration_tests::vulkan_smoke
-      - name: Check compiler without runtime
-        run: cargo check --locked --no-default-features --features compiler
       - name: Check no_std runtime
         run: cargo check --locked --no-default-features --features runtime
       - name: Build documentation without network access
         env:
           DOCS_RS: '1'
           CARGO_NET_OFFLINE: 'true'
-        run: cargo doc --locked --workspace --no-default-features --features std,runtime,half --no-deps
+        run: cargo doc --locked --workspace --no-default-features --features std,runtime,compiler,half --no-deps
       - name: Check packaged raw bindings
         run: cargo package --locked -p eerie-sys
 
@@ -122,3 +126,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang libclang-dev cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm
       - name: Build and run Cortex-M smoke test
         run: python3 tools/test-bare-metal.py
+
+  melior:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+      - uses: actions/checkout@v6.0.3
+        with:
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: python3 tools/init-runtime-deps.py
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+      - name: Test Melior with a separate LLVM/MLIR build
+        run: nix develop .#melior -c python tools/test-melior.py
