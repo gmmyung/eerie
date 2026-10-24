@@ -1,0 +1,47 @@
+name: GPU smoke tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        type: choice
+        options: [cuda, vulkan]
+        default: vulkan
+        required: true
+      cuda_target:
+        description: CUDA target matching the runner GPU
+        default: sm_89
+        type: string
+
+jobs:
+  gpu:
+    # Opt-in hardware validation; the runner must supply the driver/toolkit,
+    # Clang/libclang, CMake, and Python supported by IREE.
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: python3 tools/init-runtime-deps.py
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install iree-base-compiler==3.13.0
+      - name: Configure compiler library
+        run: |
+          library_path=$(python -c 'import iree.compiler as c; print(f"{c.__path__[0]}/_mlir_libs")')
+          echo "LIB_IREE_COMPILER=$library_path" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,$library_path" >> "$GITHUB_ENV"
+      - name: CUDA
+        if: inputs.backend == 'cuda'
+        env:
+          EERIE_TEST_CUDA: '1'
+          EERIE_CUDA_TARGET: ${{ inputs.cuda_target }}
+        run: cargo test --locked --release --features cuda integration_tests::cuda_smoke
+      - name: Vulkan
+        if: inputs.backend == 'vulkan'
+        env:
+          EERIE_TEST_VULKAN: '1'
+        run: cargo test --locked --release --features vulkan integration_tests::vulkan_smoke

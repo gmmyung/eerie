@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, string::String, vec::Vec};
+use alloc::{borrow::Cow, format, string::String, vec, vec::Vec};
 
 use super::{
     base,
@@ -30,6 +30,11 @@ impl Driver {
         Self::from_static("local-sync")
     }
 
+    /// Executes inline VMVX or embedded ELF modules without a HAL device.
+    pub fn local_inline() -> Self {
+        Self::from_static("local-inline")
+    }
+
     pub fn local_task() -> Self {
         Self::from_static("local-task")
     }
@@ -54,6 +59,11 @@ impl Driver {
 
     pub fn as_str(&self) -> &str {
         &self.name
+    }
+
+    fn is_inline(&self) -> bool {
+        self.as_str() == "local-inline"
+            || (cfg!(target_os = "none") && self.as_str() == "local-sync")
     }
 }
 
@@ -84,6 +94,10 @@ impl DeviceSpec {
 
     pub fn local_sync() -> Self {
         Self::new(Driver::local_sync())
+    }
+
+    pub fn local_inline() -> Self {
+        Self::new(Driver::local_inline())
     }
 
     pub fn local_task() -> Self {
@@ -131,6 +145,7 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
+    #[cfg(not(target_os = "none"))]
     fn from_hal(driver: Driver, info: hal::DeviceInfo) -> Self {
         Self {
             driver,
@@ -166,14 +181,16 @@ impl DeviceInfo {
     }
 }
 
-/// A configured IREE runtime with one HAL device.
+/// A configured IREE runtime using one HAL device or inline execution.
 ///
 /// `Runtime` owns the low-level driver objects needed to keep the selected
 /// device alive. Load VMFB modules into `Program`s and reuse them for calls.
 pub struct Runtime {
     instance: vm::Instance,
-    _registry: hal::DriverRegistry,
-    _driver: hal::Driver,
+    #[cfg(not(target_os = "none"))]
+    _registry: Option<hal::DriverRegistry>,
+    #[cfg(not(target_os = "none"))]
+    _driver: Option<hal::Driver>,
     device: hal::Device,
     _not_send_sync: base::NotSendSync,
 }
@@ -182,33 +199,75 @@ impl Runtime {
     /// Creates a runtime using the selected HAL device.
     pub fn new(spec: DeviceSpec) -> Result<Self, RuntimeError> {
         let instance = vm::Instance::global()?;
-        let registry = hal::DriverRegistry::with_available_drivers()?;
-        let driver = registry.create_driver(spec.driver.as_str())?;
-        let device = match &spec.selector {
-            DeviceSelector::Default => driver.create_default_device()?,
-            DeviceSelector::Ordinal(ordinal) => driver.create_device_by_ordinal(*ordinal)?,
-            DeviceSelector::Path(path) => {
-                driver.create_device_by_path(spec.driver.as_str(), path)?
+        if spec.driver.is_inline() {
+            match &spec.selector {
+                DeviceSelector::Default | DeviceSelector::Ordinal(0) => {}
+                DeviceSelector::Path(path) if path.is_empty() => {}
+                _ => {
+                    return Err(RuntimeError::InvalidArgument(
+                        "local-inline only supports the default device".into(),
+                    ))
+                }
             }
-        };
-        Ok(Self {
-            instance,
-            _registry: registry,
-            _driver: driver,
-            device,
-            _not_send_sync: base::not_send_sync(),
-        })
+            return Ok(Self {
+                instance,
+                #[cfg(not(target_os = "none"))]
+                _registry: None,
+                #[cfg(not(target_os = "none"))]
+                _driver: None,
+                device: hal::Device::inline()?,
+                _not_send_sync: base::not_send_sync(),
+            });
+        }
+        #[cfg(target_os = "none")]
+        return Err(RuntimeError::InvalidArgument(
+            "bare-metal targets support local-inline (or local-sync) only".into(),
+        ));
+        #[cfg(not(target_os = "none"))]
+        {
+            let registry = hal::DriverRegistry::with_available_drivers()?;
+            let driver = registry.create_driver(spec.driver.as_str())?;
+            let device = match &spec.selector {
+                DeviceSelector::Default => driver.create_default_device()?,
+                DeviceSelector::Ordinal(ordinal) => driver.create_device_by_ordinal(*ordinal)?,
+                DeviceSelector::Path(path) => {
+                    driver.create_device_by_path(spec.driver.as_str(), path)?
+                }
+            };
+            Ok(Self {
+                instance,
+                _registry: Some(registry),
+                _driver: Some(driver),
+                device,
+                _not_send_sync: base::not_send_sync(),
+            })
+        }
     }
 
     /// Queries available devices for a HAL driver.
     pub fn available_devices(driver: Driver) -> Result<Vec<DeviceInfo>, RuntimeError> {
-        let registry = hal::DriverRegistry::with_available_drivers()?;
-        let hal_driver = registry.create_driver(driver.as_str())?;
-        hal_driver
-            .available_devices()?
-            .into_iter()
-            .map(|info| Ok(DeviceInfo::from_hal(driver.clone(), info)))
-            .collect()
+        if driver.is_inline() {
+            return Ok(vec![DeviceInfo {
+                driver,
+                ordinal: 0,
+                path: String::new(),
+                name: "default".into(),
+            }]);
+        }
+        #[cfg(target_os = "none")]
+        return Err(RuntimeError::InvalidArgument(
+            "bare-metal targets support local-inline (or local-sync) only".into(),
+        ));
+        #[cfg(not(target_os = "none"))]
+        {
+            let registry = hal::DriverRegistry::with_available_drivers()?;
+            let hal_driver = registry.create_driver(driver.as_str())?;
+            hal_driver
+                .available_devices()?
+                .into_iter()
+                .map(|info| Ok(DeviceInfo::from_hal(driver.clone(), info)))
+                .collect()
+        }
     }
 
     /// Loads a VMFB archive into an executable program.
@@ -231,23 +290,28 @@ pub struct Program {
     instance: vm::Instance,
     device: hal::Device,
     context: vm::Context,
-    _hal_module: vm::Module,
-    _bytecode_module: vm::Module,
     _not_send_sync: base::NotSendSync,
 }
 
 impl Program {
     fn load(runtime: &Runtime, bytes: &[u8]) -> Result<Self, RuntimeError> {
         let hal_module = vm::Module::hal(&runtime.instance, &runtime.device)?;
+        let loader_module = if runtime.device.inline_allocator().is_some() {
+            Some(vm::Module::loader(&runtime.instance)?)
+        } else {
+            None
+        };
         let bytecode_module = vm::Module::bytecode(&runtime.instance, bytes)?;
-        let context =
-            vm::Context::with_modules(&runtime.instance, &[&hal_module, &bytecode_module])?;
+        let mut modules = vec![&hal_module];
+        if let Some(loader) = &loader_module {
+            modules.push(loader);
+        }
+        modules.push(&bytecode_module);
+        let context = vm::Context::with_modules(&runtime.instance, &modules)?;
         Ok(Self {
             instance: runtime.instance.clone(),
             device: runtime.device.clone(),
             context,
-            _hal_module: hal_module,
-            _bytecode_module: bytecode_module,
             _not_send_sync: base::not_send_sync(),
         })
     }
@@ -296,6 +360,26 @@ pub struct Function {
 }
 
 impl Function {
+    /// Invokes a function returning exactly one buffer view of type `T`.
+    ///
+    /// Rejects functions with a different result count before executing them.
+    /// A result element type mismatch is reported after execution.
+    pub fn invoke_one<T: BufferElement>(
+        &self,
+        inputs: impl IntoIterator<Item = impl Into<Value>>,
+    ) -> Result<BufferView<T>, RuntimeError>
+    where
+        BufferView<T>: TryFrom<Value, Error = RuntimeError>,
+    {
+        let output_count = self.inner.result_count()?;
+        if output_count != 1 {
+            return Err(RuntimeError::InvalidArgument(format!(
+                "expected one function result, got {output_count}"
+            )));
+        }
+        self.invoke(inputs)?.remove(0).try_into()
+    }
+
     /// Invokes with HAL buffer-view inputs and returns dynamically typed outputs.
     pub fn invoke<I, V>(&self, inputs: I) -> Result<Vec<Value>, RuntimeError>
     where
@@ -303,16 +387,22 @@ impl Function {
         V: Into<Value>,
     {
         let inputs = inputs.into_iter().map(Into::into).collect::<Vec<_>>();
+        let output_count = self.inner.result_count()?;
+        let mut outputs = Vec::with_capacity(output_count);
+        // Driver setup may create isolated VMVX instances, which temporarily
+        // reset process-global VM list/buffer adapters while registering types.
+        // Protect lists and their destruction, as well as the native invoke.
+        // Buffer values are declared above the guard so their device handles
+        // are dropped after it, including when an invocation returns an error.
+        let _guard = base::runtime_invocation_guard();
         let mut input_list = vm::List::<vm::Undefined>::new(inputs.len(), &self.instance)?;
         for input in &inputs {
             push_value(&mut input_list, &self.instance, input)?;
         }
 
-        let output_count = self.inner.result_count()?;
         let mut output_list = vm::List::<vm::Undefined>::new(output_count, &self.instance)?;
         self.inner.invoke(&input_list, &mut output_list)?;
 
-        let mut outputs = Vec::with_capacity(output_count);
         for index in 0..output_count {
             outputs.push(output_list.get_buffer_view_value(index, &self.device)?);
         }

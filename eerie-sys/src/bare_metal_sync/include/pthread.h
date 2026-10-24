@@ -4,25 +4,32 @@
 #ifndef EERIE_SYS_BARE_METAL_PTHREAD_H_
 #define EERIE_SYS_BARE_METAL_PTHREAD_H_
 
+#include <sys/types.h>
+#include <time.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef unsigned int pthread_once_t;
-typedef unsigned int pthread_mutex_t;
-typedef unsigned int pthread_cond_t;
-typedef unsigned int pthread_condattr_t;
-typedef long time_t;
-typedef int clockid_t;
-
-struct timespec {
-  time_t tv_sec;
-  long tv_nsec;
-};
+// Newlib can declare its own pthread types from sys/types.h even without a
+// pthread implementation. Use private storage types for our Rust-backed ABI,
+// while taking time_t/timespec/clockid_t from the toolchain's headers.
+typedef unsigned int eerie_pthread_once_t;
+typedef unsigned int eerie_pthread_mutex_t;
+typedef unsigned int eerie_pthread_cond_t;
+typedef unsigned int eerie_pthread_condattr_t;
+#define pthread_once_t eerie_pthread_once_t
+#define pthread_mutex_t eerie_pthread_mutex_t
+#define pthread_cond_t eerie_pthread_cond_t
+#define pthread_condattr_t eerie_pthread_condattr_t
 
 #define PTHREAD_ONCE_INIT 0u
+#ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME 0
+#endif
+#ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC 1
+#endif
 
 #ifndef EBUSY
 #define EBUSY 16

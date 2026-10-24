@@ -3,3 +3,5 @@ target
 .vscode
 .venv
 .cargo
+!tests/bare-metal/.cargo/
+!tests/bare-metal/.cargo/config.toml
