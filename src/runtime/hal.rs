@@ -1,6 +1,8 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, format, string::String, vec::Vec};
+#[cfg(not(target_os = "none"))]
+use alloc::string::String;
+use alloc::{borrow::Cow, format, vec::Vec};
 use core::{
     fmt::{Debug, Formatter},
     marker::PhantomData,
@@ -33,6 +35,7 @@ mod private {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn infinite_timeout() -> sys::iree_timeout_t {
     sys::iree_timeout_t {
         type_: sys::iree_timeout_type_e_IREE_TIMEOUT_ABSOLUTE,
@@ -40,6 +43,7 @@ fn infinite_timeout() -> sys::iree_timeout_t {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn string_view_to_string(view: sys::iree_string_view_t) -> String {
     if view.data.is_null() || view.size == 0 {
         return String::new();
@@ -48,6 +52,7 @@ fn string_view_to_string(view: sys::iree_string_view_t) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) struct DeviceInfo {
     pub(crate) ordinal: usize,
     pub(crate) path: String,
@@ -55,12 +60,14 @@ pub(crate) struct DeviceInfo {
 }
 
 /// A HAL driver registry populated with the drivers linked into this binary.
+#[cfg(not(target_os = "none"))]
 pub(crate) struct DriverRegistry {
     pub(crate) ctx: *mut sys::iree_hal_driver_registry_t,
     host_allocator: base::Allocator,
     _not_send_sync: base::NotSendSync,
 }
 
+#[cfg(not(target_os = "none"))]
 impl DriverRegistry {
     /// Creates a driver registry and registers all available IREE HAL drivers.
     pub(crate) fn with_available_drivers() -> Result<Self, RuntimeError> {
@@ -71,8 +78,13 @@ impl DriverRegistry {
             sys::iree_hal_driver_registry_allocate(host_allocator.ctx, &mut ctx)
         })
         .into_result()?;
-        base::Status::from_raw(unsafe { sys::iree_hal_register_all_available_drivers(ctx) })
-            .into_result()?;
+        if let Err(error) =
+            base::Status::from_raw(unsafe { sys::iree_hal_register_all_available_drivers(ctx) })
+                .into_result()
+        {
+            unsafe { sys::iree_hal_driver_registry_free(ctx) };
+            return Err(error.into());
+        }
         Ok(Self {
             ctx,
             host_allocator,
@@ -100,6 +112,7 @@ impl DriverRegistry {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Drop for DriverRegistry {
     fn drop(&mut self) {
         let _guard = base::runtime_lifecycle_guard();
@@ -110,44 +123,70 @@ impl Drop for DriverRegistry {
 }
 
 /// A HAL driver.
+#[cfg(not(target_os = "none"))]
 pub(crate) struct Driver {
     pub(crate) ctx: *mut sys::iree_hal_driver_t,
     host_allocator: base::Allocator,
     _not_send_sync: base::NotSendSync,
 }
 
+#[cfg(not(target_os = "none"))]
 impl Driver {
-    /// Creates the driver's default device.
-    pub(crate) fn create_default_device(&self) -> Result<Device, RuntimeError> {
+    fn create_device(
+        &self,
+        create: impl FnOnce(
+            *const sys::iree_hal_device_create_params_t,
+            *mut *mut sys::iree_hal_device_t,
+        ) -> sys::iree_status_t,
+    ) -> Result<Device, RuntimeError> {
         let _guard = base::runtime_lifecycle_guard();
-        let mut ctx = core::ptr::null_mut();
+        let mut pool = core::ptr::null_mut();
         base::Status::from_raw(unsafe {
-            sys::iree_hal_driver_create_default_device(self.ctx, self.host_allocator.ctx, &mut ctx)
+            sys::iree_async_proactor_pool_create(
+                1,
+                core::ptr::null(),
+                sys::iree_async_proactor_pool_options_default(),
+                self.host_allocator.ctx,
+                &mut pool,
+            )
         })
         .into_result()?;
-        Ok(Device {
-            ctx,
-            _not_send_sync: base::not_send_sync(),
+        let params = sys::iree_hal_device_create_params_t {
+            proactor_pool: pool,
+            ..Default::default()
+        };
+        let mut ctx = core::ptr::null_mut();
+        let status = base::Status::from_raw(create(&params, &mut ctx));
+        // Successfully created devices retain the pool. Release the caller's
+        // reference on both success and failure.
+        unsafe { sys::iree_async_proactor_pool_release(pool) };
+        status.into_result()?;
+        Device::from_hal(ctx, &self.host_allocator)
+    }
+
+    /// Creates the driver's default device.
+    pub(crate) fn create_default_device(&self) -> Result<Device, RuntimeError> {
+        self.create_device(|params, out| unsafe {
+            sys::iree_hal_driver_create_default_device(
+                self.ctx,
+                params,
+                self.host_allocator.ctx,
+                out,
+            )
         })
     }
 
     pub(crate) fn create_device_by_ordinal(&self, ordinal: usize) -> Result<Device, RuntimeError> {
-        let _guard = base::runtime_lifecycle_guard();
-        let mut ctx = core::ptr::null_mut();
-        base::Status::from_raw(unsafe {
+        self.create_device(|params, out| unsafe {
             sys::iree_hal_driver_create_device_by_ordinal(
                 self.ctx,
                 ordinal,
                 0,
                 core::ptr::null(),
+                params,
                 self.host_allocator.ctx,
-                &mut ctx,
+                out,
             )
-        })
-        .into_result()?;
-        Ok(Device {
-            ctx,
-            _not_send_sync: base::not_send_sync(),
         })
     }
 
@@ -156,23 +195,17 @@ impl Driver {
         driver_name: &str,
         path: &str,
     ) -> Result<Device, RuntimeError> {
-        let _guard = base::runtime_lifecycle_guard();
-        let mut ctx = core::ptr::null_mut();
-        base::Status::from_raw(unsafe {
+        self.create_device(|params, out| unsafe {
             sys::iree_hal_driver_create_device_by_path(
                 self.ctx,
                 StringView::from(driver_name).ctx,
                 StringView::from(path).ctx,
                 0,
                 core::ptr::null(),
+                params,
                 self.host_allocator.ctx,
-                &mut ctx,
+                out,
             )
-        })
-        .into_result()?;
-        Ok(Device {
-            ctx,
-            _not_send_sync: base::not_send_sync(),
         })
     }
 
@@ -216,6 +249,7 @@ impl Driver {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Clone for Driver {
     fn clone(&self) -> Self {
         unsafe {
@@ -229,6 +263,7 @@ impl Clone for Driver {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl Drop for Driver {
     fn drop(&mut self) {
         let _guard = base::runtime_lifecycle_guard();
@@ -238,21 +273,145 @@ impl Drop for Driver {
     }
 }
 
-/// A HAL device.
+enum DeviceKind {
+    #[cfg(not(target_os = "none"))]
+    Hal {
+        ctx: *mut sys::iree_hal_device_t,
+        group: *mut sys::iree_hal_device_group_t,
+    },
+    Inline {
+        allocator: *mut sys::iree_hal_allocator_t,
+    },
+}
+
+/// A retained HAL device group or a device-free inline allocator.
 pub(crate) struct Device {
-    pub(crate) ctx: *mut sys::iree_hal_device_t,
+    kind: DeviceKind,
     _not_send_sync: base::NotSendSync,
 }
 
-impl Device {}
+impl Device {
+    #[cfg(not(target_os = "none"))]
+    fn from_hal(
+        ctx: *mut sys::iree_hal_device_t,
+        allocator: &base::Allocator,
+    ) -> Result<Self, RuntimeError> {
+        let mut tracker = core::ptr::null_mut();
+        let mut group = core::ptr::null_mut();
+        let status = base::Status::from_raw(unsafe {
+            sys::iree_async_frontier_tracker_create(
+                // IREE's default helper is static inline and is not emitted by
+                // bindgen. Keep these values aligned with frontier_tracker.h.
+                sys::iree_async_frontier_tracker_options_t {
+                    axis_table_capacity: 256,
+                    session_epoch: 1,
+                    machine_index: 0,
+                },
+                allocator.ctx,
+                &mut tracker,
+            )
+        })
+        .into_result()
+        .and_then(|_| {
+            base::Status::from_raw(unsafe {
+                sys::iree_hal_device_group_create_from_device(
+                    ctx,
+                    tracker,
+                    allocator.ctx,
+                    &mut group,
+                )
+            })
+            .into_result()
+        });
+        unsafe { sys::iree_async_frontier_tracker_release(tracker) };
+        if let Err(error) = status {
+            unsafe { sys::iree_hal_device_release(ctx) };
+            return Err(error.into());
+        }
+        Ok(Self {
+            kind: DeviceKind::Hal { ctx, group },
+            _not_send_sync: base::not_send_sync(),
+        })
+    }
+
+    pub(crate) fn inline() -> Result<Self, RuntimeError> {
+        let host = base::Allocator::get_global();
+        let mut allocator = core::ptr::null_mut();
+        base::Status::from_raw(unsafe {
+            sys::iree_hal_allocator_create_heap(
+                StringView::from("local-inline").ctx,
+                host.ctx,
+                host.ctx,
+                &mut allocator,
+            )
+        })
+        .into_result()?;
+        Ok(Self {
+            kind: DeviceKind::Inline { allocator },
+            _not_send_sync: base::not_send_sync(),
+        })
+    }
+
+    pub(crate) fn inline_allocator(&self) -> Option<*mut sys::iree_hal_allocator_t> {
+        match self.kind {
+            DeviceKind::Inline { allocator } => Some(allocator),
+            #[cfg(not(target_os = "none"))]
+            DeviceKind::Hal { .. } => None,
+        }
+    }
+
+    #[cfg(not(target_os = "none"))]
+    pub(crate) fn group(&self) -> *mut sys::iree_hal_device_group_t {
+        match self.kind {
+            DeviceKind::Hal { group, .. } => group,
+            DeviceKind::Inline { .. } => unreachable!("inline runtimes have no device group"),
+        }
+    }
+
+    unsafe fn read_into(
+        &self,
+        buffer: *mut sys::iree_hal_buffer_t,
+        out: *mut u8,
+        len: usize,
+    ) -> Result<(), RuntimeError> {
+        let status =
+            match self.kind {
+                DeviceKind::Inline { .. } => unsafe {
+                    sys::iree_hal_buffer_map_read(buffer, 0, out.cast(), len)
+                },
+                #[cfg(not(target_os = "none"))]
+                DeviceKind::Hal { ctx, .. } => unsafe {
+                    sys::iree_hal_device_transfer_d2h(
+                    ctx, buffer, 0, out.cast(), len,
+                    sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
+                    infinite_timeout(),
+                )
+                },
+            };
+        base::Status::from_raw(status)
+            .into_result()
+            .map_err(Into::into)
+    }
+}
 
 impl Clone for Device {
     fn clone(&self) -> Self {
-        unsafe {
-            sys::iree_hal_device_retain(self.ctx);
-        }
+        let kind = match self.kind {
+            DeviceKind::Inline { allocator } => {
+                unsafe { sys::iree_hal_allocator_retain(allocator) };
+                DeviceKind::Inline { allocator }
+            }
+            #[cfg(not(target_os = "none"))]
+            DeviceKind::Hal { ctx, group } => {
+                unsafe {
+                    sys::iree_hal_device_retain(ctx);
+                    sys::iree_hal_device_group_retain(group);
+                }
+                DeviceKind::Hal { ctx, group }
+            }
+        };
         Self {
-            ctx: self.ctx,
+            kind,
             _not_send_sync: base::not_send_sync(),
         }
     }
@@ -261,8 +420,15 @@ impl Clone for Device {
 impl Drop for Device {
     fn drop(&mut self) {
         let _guard = base::runtime_lifecycle_guard();
-        unsafe {
-            sys::iree_hal_device_release(self.ctx);
+        match self.kind {
+            DeviceKind::Inline { allocator } => unsafe {
+                sys::iree_hal_allocator_release(allocator);
+            },
+            #[cfg(not(target_os = "none"))]
+            DeviceKind::Hal { ctx, group } => unsafe {
+                sys::iree_hal_device_release(ctx);
+                sys::iree_hal_device_group_release(group);
+            },
         }
     }
 }
@@ -428,14 +594,18 @@ impl<T: BufferElement> BufferView<T> {
         shape: &[usize],
         data: &[T],
     ) -> Result<Self, RuntimeError> {
-        let expected_len = shape.iter().try_fold(1usize, |product, dim| {
-            product.checked_mul(*dim).ok_or_else(|| {
-                RuntimeError::InvalidArgument(format!(
-                    "buffer shape {:?} overflows usize element count",
-                    shape
-                ))
-            })
-        })?;
+        let expected_len = if shape.contains(&0) {
+            0
+        } else {
+            shape.iter().try_fold(1usize, |product, dim| {
+                product.checked_mul(*dim).ok_or_else(|| {
+                    RuntimeError::InvalidArgument(format!(
+                        "buffer shape {:?} overflows usize element count",
+                        shape
+                    ))
+                })
+            })?
+        };
         if expected_len != data.len() {
             return Err(RuntimeError::InvalidArgument(format!(
                 "buffer shape {:?} requires {} elements, got {}",
@@ -450,10 +620,16 @@ impl<T: BufferElement> BufferView<T> {
         let bytes: ConstByteSpan = encoded.as_ref().into();
         debug!("shape: {:?}", shape);
         debug!("data len: {}", encoded.len());
+        let (raw_device, allocator) = match device.kind {
+            DeviceKind::Inline { allocator } => (core::ptr::null_mut(), allocator),
+            #[cfg(not(target_os = "none"))]
+            DeviceKind::Hal { ctx, .. } => (ctx, unsafe { sys::iree_hal_device_allocator(ctx) }),
+        };
+        let inline = device.inline_allocator().is_some();
         base::Status::from_raw(unsafe {
             sys::iree_hal_buffer_view_allocate_buffer_copy(
-                device.ctx,
-                sys::iree_hal_device_allocator(device.ctx),
+                raw_device,
+                allocator,
                 shape.len(),
                 shape.as_ptr(),
                 T::IREE_ELEMENT_TYPE as sys::iree_hal_element_type_t,
@@ -461,15 +637,38 @@ impl<T: BufferElement> BufferView<T> {
                 sys::iree_hal_buffer_params_t {
                     usage: sys::iree_hal_buffer_usage_bits_t_IREE_HAL_BUFFER_USAGE_DEFAULT,
                     access: sys::iree_hal_memory_access_bits_t_IREE_HAL_MEMORY_ACCESS_ALL as _,
-                    type_: sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL,
+                    type_: sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL
+                        | if inline {
+                            sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_HOST_VISIBLE
+                        } else {
+                            0
+                        },
                     queue_affinity: 0,
                     min_alignment: 0,
                 },
-                bytes.ctx,
+                if inline {
+                    sys::iree_const_byte_span_t::default()
+                } else {
+                    bytes.ctx
+                },
                 &mut ctx,
             )
         })
         .into_result()?;
+        if inline {
+            let status = base::Status::from_raw(unsafe {
+                sys::iree_hal_buffer_map_write(
+                    sys::iree_hal_buffer_view_buffer(ctx),
+                    0,
+                    encoded.as_ptr().cast(),
+                    encoded.len(),
+                )
+            });
+            if let Err(error) = status.into_result() {
+                unsafe { sys::iree_hal_buffer_view_release(ctx) };
+                return Err(error.into());
+            }
+        }
         Ok(Self {
             ctx,
             device: device.clone(),
@@ -536,18 +735,10 @@ impl<T: BufferElement> BufferView<T> {
             }
 
             let mut data = Vec::<T>::with_capacity(byte_length / element_size);
-            base::Status::from_raw(unsafe {
-                sys::iree_hal_device_transfer_d2h(
-                    self.device.ctx,
-                    self.raw_buffer(),
-                    0,
-                    data.as_mut_ptr() as *mut core::ffi::c_void,
-                    byte_length,
-                    sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
-                    infinite_timeout(),
-                )
-            })
-            .into_result()?;
+            unsafe {
+                self.device
+                    .read_into(self.raw_buffer(), data.as_mut_ptr().cast(), byte_length)
+            }?;
             unsafe {
                 data.set_len(byte_length / element_size);
             }
@@ -555,18 +746,10 @@ impl<T: BufferElement> BufferView<T> {
         }
 
         let mut bytes = Vec::<u8>::with_capacity(byte_length);
-        base::Status::from_raw(unsafe {
-            sys::iree_hal_device_transfer_d2h(
-                self.device.ctx,
-                self.raw_buffer(),
-                0,
-                bytes.as_mut_ptr() as *mut core::ffi::c_void,
-                byte_length,
-                sys::iree_hal_transfer_buffer_flag_bits_t_IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
-                infinite_timeout(),
-            )
-        })
-        .into_result()?;
+        unsafe {
+            self.device
+                .read_into(self.raw_buffer(), bytes.as_mut_ptr(), byte_length)
+        }?;
         unsafe {
             bytes.set_len(byte_length);
         }

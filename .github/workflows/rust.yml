@@ -2,33 +2,84 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v6.0.3
-      with:
-        submodules: recursive
-    - name: install iree-compile
-      run: pip3 install iree-base-compiler==3.11.0
-    - name: create config.toml
-      run: |
-        library_path=$(python3 -c "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')")
-        mkdir -p .cargo
-        echo "[build]
-        rustflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
-        rustdocflags = [\"-C\", \"link-arg=-Wl,-rpath=${library_path}\"]
-        [env]
-        LIB_IREE_COMPILER = \"${library_path}\"" > .cargo/config.toml
-        
-    - name: Run tests
-      run: RUST_BACKTRACE=1 cargo test -vv --release
+      - uses: actions/checkout@v6.0.3
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake ninja-build
+      - name: Install matching IREE compiler
+        run: python -m pip install iree-base-compiler==3.13.0
+      - name: Configure compiler library
+        shell: bash
+        run: |
+          library_path=$(python -c 'import iree.compiler as c; print(f"{c.__path__[0]}/_mlir_libs")')
+          echo "LIB_IREE_COMPILER=$library_path" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,$library_path" >> "$GITHUB_ENV"
+          echo "RUSTDOCFLAGS=-C link-arg=-Wl,-rpath,$library_path" >> "$GITHUB_ENV"
+      - name: Check formatting and fixture reproducibility
+        run: |
+          cargo fmt --all --check
+          python tools/regenerate-fixtures.py --check
+      - name: Test compiler and runtime
+        env:
+          RUST_BACKTRACE: '1'
+        run: cargo test --locked --release --features half
+      - name: Test runtime without compiler
+        run: cargo test --locked --no-default-features --features std,runtime,half
+      - name: Test Vulkan on software driver
+        if: runner.os == 'Linux'
+        env:
+          EERIE_TEST_VULKAN: '1'
+        run: |
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
+          cargo test --locked --release --features vulkan integration_tests::vulkan_smoke
+      - name: Check compiler without runtime and no_std runtime
+        run: |
+          cargo check --locked --no-default-features --features compiler
+          cargo check --locked --no-default-features --features runtime
+      - name: Build documentation without network access
+        env:
+          DOCS_RS: '1'
+          CARGO_NET_OFFLINE: 'true'
+        run: cargo doc --locked --workspace --no-default-features --features std,runtime,half --no-deps
+      - name: Check packaged raw bindings
+        run: cargo package --locked -p eerie-sys
+
+  bare-metal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - name: Install native dependencies
+        # Newlib supplies C headers for the toolchain. The smoke test checks the
+        # link map to ensure none of its runtime archives enter the executable.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang libclang-dev cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi qemu-system-arm
+      - name: Build and run Cortex-M smoke test
+        run: python3 tools/test-bare-metal.py

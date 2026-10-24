@@ -1,5 +1,8 @@
-use std::env;
-use std::path::{Path, PathBuf};
+#[cfg(any(feature = "compiler", feature = "runtime"))]
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 #[cfg(feature = "compiler")]
 fn generate_bindings(
@@ -47,6 +50,7 @@ fn generate_bindings(
     }
 }
 
+#[cfg(feature = "runtime")]
 fn generate_binding(
     sysroot: Option<&PathBuf>,
     header_path: &Path,
@@ -58,13 +62,17 @@ fn generate_binding(
     let mut builder = bindgen::Builder::default()
         .header(header_path.display().to_string())
         .clang_arg(format!("-I{}", include_path.display()))
+        .size_t_is_usize(true)
+        .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
         .derive_default(true)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
     #[cfg(not(feature = "std"))]
     {
+        builder = builder.use_core();
+    }
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("none") {
         builder = builder
-            .use_core()
             .clang_arg("-DIREE_PLATFORM_GENERIC=1")
             .clang_arg("-Wno-char-subscripts")
             .clang_arg("-Wno-format")
@@ -93,8 +101,16 @@ fn generate_binding(
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=LIB_IREE_COMPILER");
+    println!("cargo:rerun-if-changed=CMakeLists.txt");
+    println!("cargo:rerun-if-changed=iree/CMakeLists.txt");
+    #[cfg(feature = "runtime")]
+    println!("cargo:rerun-if-changed=iree/runtime/src");
+    #[cfg(any(feature = "compiler", feature = "runtime"))]
     let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
+    #[cfg(any(feature = "compiler", feature = "runtime"))]
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    #[cfg(feature = "runtime")]
     let bare_metal_sync_include_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bare_metal_sync/include");
 
@@ -123,25 +139,32 @@ fn main() {
             // Docs.rs automatically downloads the IREE compiler from pypi
             // and sets the LIB_IREE_COMPILER environment variable
 
-            std::process::Command::new("pip3")
-                .args(["install", "iree-base-compiler==3.11.0"])
+            std::process::Command::new("python3")
+                .args(["-m", "pip", "install", "iree-base-compiler==3.13.0"])
                 .status()
                 .map_err(|e| format!("Failed to install IREE compiler: {}", e))
-                .unwrap();
+                .unwrap()
+                .success()
+                .then_some(())
+                .expect("Failed to install IREE compiler");
 
             // Find the IREE compiler library
-            std::str::from_utf8(
-                &std::process::Command::new(out_path.join("python3"))
-                    .args([
-                        "-c",
-                        "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
-                    ])
-                    .output()
-                    .expect("Failed to find IREE compiler library")
-                    .stdout,
-            )
-            .unwrap()
-            .to_string()
+            let output = std::process::Command::new("python3")
+                .args([
+                    "-c",
+                    "import iree.compiler as _; print(f'{_.__path__[0]}/_mlir_libs/')",
+                ])
+                .output()
+                .expect("Failed to find IREE compiler library");
+            assert!(
+                output.status.success(),
+                "Failed to import the installed IREE compiler: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            std::str::from_utf8(&output.stdout)
+                .unwrap()
+                .trim()
+                .to_string()
         } else {
             // The user can set the LIB_IREE_COMPILER environment variable
             env::var("LIB_IREE_COMPILER").expect(
@@ -176,27 +199,34 @@ fn main() {
             .arg("--print-sysroot")
             .output()
             .expect("Failed to execute command");
-        let sysroot: Option<PathBuf> = match sysroot_output.status.success() {
-            true => Some(
-                String::from_utf8(sysroot_output.stdout)
-                    .expect("Failed to parse sysroot")
-                    .trim()
-                    .into(),
-            ),
-            false => None,
-        };
-        generate_binding(
-            sysroot.as_ref(),
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime_api.h"),
-            &iree_path.join("runtime").join("src"),
-            &PathBuf::from(env::var("OUT_DIR").unwrap()).join("runtime.rs"),
-            if bare_metal {
-                std::slice::from_ref(&bare_metal_sync_include_path)
-            } else {
-                &[]
-            },
-        );
-
+        let mut sysroot = sysroot_output
+            .status
+            .success()
+            .then(|| {
+                PathBuf::from(
+                    String::from_utf8(sysroot_output.stdout)
+                        .expect("Failed to parse sysroot")
+                        .trim(),
+                )
+            })
+            .filter(|path| !path.as_os_str().is_empty());
+        if bare_metal && sysroot.is_none() {
+            // Arm GNU toolchains may use a relocatable newlib layout without
+            // reporting a sysroot. Derive it from the selected libc archive.
+            let output = cc::Build::new()
+                .get_compiler()
+                .to_command()
+                .arg("-print-file-name=libc.a")
+                .output()
+                .expect("Failed to locate newlib");
+            let archive = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
+            if archive.is_absolute() && archive.exists() {
+                sysroot = archive
+                    .parent()
+                    .and_then(Path::parent)
+                    .map(Path::to_path_buf);
+            }
+        }
         // The bare-metal build process requires runtime tools: iree-flatcc-cli and
         // iree-c-embed-data, so there has to be a host tool build before the
         // actual runtime cross-build.
@@ -209,6 +239,7 @@ fn main() {
                 ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
                 ("IREE_BUILD_COMPILER", "OFF"),
                 ("IREE_BUILD_TESTS", "OFF"),
+                ("IREE_BUILD_BENCHMARKS", "OFF"),
                 ("IREE_BUILD_SAMPLES", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
                 ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
@@ -229,13 +260,17 @@ fn main() {
             None
         };
 
-        let mut config = cmake::Config::new(iree_path);
+        let mut config = cmake::Config::new(env!("CARGO_MANIFEST_DIR"));
 
         // CMake config for IREE runtime build
         let mut cmake_defs = vec![
             ("IREE_ENABLE_LIBBACKTRACE", "OFF"),
             ("IREE_BUILD_COMPILER", "OFF"),
             ("IREE_BUILD_TESTS", "OFF"),
+            ("IREE_BUILD_BENCHMARKS", "OFF"),
+            // Rust links this archive; native GCC/Clang LTO objects may use an
+            // incompatible format or LLVM version. Optimize without C LTO.
+            ("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""),
             ("IREE_BUILD_SAMPLES", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
             ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
@@ -251,7 +286,6 @@ fn main() {
         match std::env::var("OPT_LEVEL").unwrap().as_str() {
             "z" => {
                 cflags.push("-Oz".to_string());
-                cmake_defs.push(("IREE_SIZE_OPTIMIZED", "ON"));
             }
             "3" => {
                 cflags.push("-O3".to_string());
@@ -274,10 +308,13 @@ fn main() {
             cmake_defs.extend(vec![
                 ("IREE_ENABLE_THREADING", "OFF"),
                 ("IREE_HAL_DRIVER_DEFAULTS", "OFF"),
-                ("IREE_HAL_DRIVER_LOCAL_SYNC", "ON"),
+                ("IREE_HAL_DRIVER_LOCAL_SYNC", "OFF"),
+                ("EERIE_BARE_METAL", "ON"),
+                ("IREE_ENABLE_POSIX", "OFF"),
+                ("CMAKE_C_EXTENSIONS", "ON"),
                 ("IREE_HAL_EXECUTABLE_LOADER_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_LOADER_EMBEDDED_ELF", "ON"),
-                ("IREE_HAL_EXECUTABLE_LOADER_VMVX_MODULE", "ON"),
+                ("IREE_HAL_EXECUTABLE_LOADER_VMVX_MODULE", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_DEFAULTS", "OFF"),
                 ("IREE_HAL_EXECUTABLE_PLUGIN_EMBEDDED_ELF", "ON"),
                 ("IREE_ENABLE_POSITION_INDEPENDENT_CODE", "OFF"),
@@ -300,10 +337,11 @@ fn main() {
                     "-DIREE_STATUS_FEATURES=0",
                     "-fdata-sections",
                     "-ffunction-sections",
+                    "-fno-unwind-tables",
+                    "-fno-asynchronous-unwind-tables",
                     "-Wno-char-subscripts",
                     "-Wno-format",
                     "-Wno-error=unused-variable",
-                    "-Wl,--gc-sections",
                 ]
                 .into_iter()
                 .map(String::from),
@@ -319,36 +357,43 @@ fn main() {
             config.cxxflag(v);
         });
 
-        config
-            .build_target("iree_runtime_unified")
-            .out_dir(&build_path);
+        config.build_target("eerie_runtime").out_dir(&build_path);
 
         // Build IREE runtime
         config.build();
 
-        // The IREE runtime is compiled as static library, and it requires iree_runtime_unified,
+        // Public bytecode headers now include the generated ISA op table, so
+        // generate Rust bindings after CMake has built the native library.
+        let mut binding_includes = vec![
+            build_path.join("build/iree/runtime/src"),
+            iree_path.join("third_party/flatcc/include"),
+        ];
+        if bare_metal {
+            binding_includes.push(bare_metal_sync_include_path);
+        }
+        generate_binding(
+            sysroot.as_ref(),
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime_api.h"),
+            &iree_path.join("runtime/src"),
+            &out_path.join("runtime.rs"),
+            &binding_includes,
+        );
+
+        // The IREE runtime is compiled as static library, and it requires eerie_runtime,
         // flatcc_parsing, and platform-specific libraries. When cross-compiling, lld is
         // recommended.
         println!(
             "cargo:rustc-link-search={}",
-            build_path.join("build/runtime/src/iree/runtime").display()
+            build_path.join("build").display()
         );
         println!(
             "cargo:rustc-link-search={}",
             build_path
-                .join("build/build_tools/third_party/flatcc")
+                .join("build/iree/build_tools/third_party/flatcc")
                 .display()
         );
-        println!(
-            "cargo:rustc-link-search={}",
-            build_path
-                .join("build/build_tools/third_party/printf")
-                .display()
-        );
-
         // Print order is important.
-        println!("cargo:rustc-link-lib=iree_runtime_unified");
-        println!("cargo:rustc-link-lib=printf_printf");
+        println!("cargo:rustc-link-lib=static=eerie_runtime");
         println!("cargo:rustc-link-lib=flatcc_parsing");
 
         match target_os.as_str() {
@@ -362,7 +407,8 @@ fn main() {
             }
 
             "none" => {
-                println!("cargo:rustc-link-lib=gcc");
+                // Rust's compiler_builtins supplies target ABI helpers without
+                // pulling in libgcc's hosted unwinder or a C runtime.
             }
             _ => {
                 panic!("Only Linux, macOS, and no-std targets are supported");

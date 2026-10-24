@@ -1,12 +1,22 @@
-use core::ffi::{c_int, c_long, c_uint, c_void};
+use crate::runtime::timespec;
+use core::ffi::{c_int, c_uint, c_void};
 
 const PTHREAD_BUSY: c_int = 16;
 const PTHREAD_TIMED_OUT: c_int = 110;
 
-#[repr(C)]
-pub struct timespec {
-    tv_sec: c_long,
-    tv_nsec: c_long,
+// IREE uses a 64-bit atomic counter for executable IDs even on 32-bit MCUs.
+// These targets have no native atomic u64 instruction or hosted libatomic.
+#[no_mangle]
+pub unsafe extern "C" fn __atomic_fetch_add_8(
+    value: *mut u64,
+    increment: u64,
+    _ordering: c_int,
+) -> u64 {
+    critical_section::with(|_| unsafe {
+        let previous = value.read();
+        value.write(previous.wrapping_add(increment));
+        previous
+    })
 }
 
 #[inline]

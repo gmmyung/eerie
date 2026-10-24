@@ -70,10 +70,10 @@
             shellHook = ''
               if [ -z "''${LIB_IREE_COMPILER:-}" ]; then
                 : "''${XDG_CACHE_HOME:=$HOME/.cache}"
-                export EERIE_IREE_VENV="''${EERIE_IREE_VENV:-$XDG_CACHE_HOME/eerie/iree-compiler-venv}"
-                export EERIE_IREE_COMPILER_PACKAGE="''${EERIE_IREE_COMPILER_PACKAGE:-iree-base-compiler==3.11.0}"
+                export EERIE_IREE_VENV="''${EERIE_IREE_VENV:-$XDG_CACHE_HOME/eerie/iree-compiler-3.13.0-venv}"
+                export EERIE_IREE_COMPILER_PACKAGE="''${EERIE_IREE_COMPILER_PACKAGE:-iree-base-compiler==3.13.0}"
                 export EERIE_IREE_COMPILER_DISTRIBUTION="''${EERIE_IREE_COMPILER_DISTRIBUTION:-iree-base-compiler}"
-                export EERIE_IREE_COMPILER_VERSION="''${EERIE_IREE_COMPILER_VERSION:-3.11.0}"
+                export EERIE_IREE_COMPILER_VERSION="''${EERIE_IREE_COMPILER_VERSION:-3.13.0}"
 
                 if [ ! -x "$EERIE_IREE_VENV/bin/python" ]; then
                   mkdir -p "$(dirname "$EERIE_IREE_VENV")"
@@ -81,11 +81,12 @@
                 fi
 
                 if ! "$EERIE_IREE_VENV/bin/python" -c 'import importlib.metadata as m, os; import iree.compiler; assert m.version(os.environ["EERIE_IREE_COMPILER_DISTRIBUTION"]) == os.environ["EERIE_IREE_COMPILER_VERSION"]' >/dev/null 2>&1; then
-                  "$EERIE_IREE_VENV/bin/pip" install "$EERIE_IREE_COMPILER_PACKAGE"
+                  "$EERIE_IREE_VENV/bin/pip" install --upgrade --force-reinstall "$EERIE_IREE_COMPILER_PACKAGE" || exit 1
                 fi
 
                 export PATH="$EERIE_IREE_VENV/bin:$PATH"
-                export LIB_IREE_COMPILER="$("$EERIE_IREE_VENV/bin/python" -c 'import iree.compiler as _; print(f"{_.__path__[0]}/_mlir_libs/")')"
+                LIB_IREE_COMPILER="$("$EERIE_IREE_VENV/bin/python" -c 'import iree.compiler as _; print(f"{_.__path__[0]}/_mlir_libs/")')" || exit 1
+                export LIB_IREE_COMPILER
               fi
 
               case "$(uname -s)" in

@@ -41,7 +41,10 @@ fn create_registered_instance() -> Result<*mut sys::iree_vm_instance_t, RuntimeE
     })
     .into_result()?;
 
+    #[cfg(not(target_os = "none"))]
     let status = base::Status::from_raw(unsafe { sys::iree_hal_module_register_all_types(ctx) });
+    #[cfg(target_os = "none")]
+    let status = base::Status::from_raw(unsafe { sys::iree_hal_module_register_loader_types(ctx) });
     if let Err(err) = status.into_result() {
         unsafe {
             sys::iree_vm_instance_release(ctx);
@@ -147,29 +150,71 @@ impl Module {
         let _guard = base::runtime_lifecycle_guard();
 
         let mut ctx = core::ptr::null_mut();
-        let mut device_group = core::ptr::null_mut();
+        let status = if let Some(allocator) = device.inline_allocator() {
+            base::Status::from_raw(unsafe {
+                sys::iree_hal_inline_module_create(
+                    instance.ctx,
+                    sys::iree_hal_inline_module_flag_bits_t_IREE_HAL_INLINE_MODULE_FLAG_NONE,
+                    sys::iree_hal_module_debug_sink_null(),
+                    allocator,
+                    instance.allocator().ctx,
+                    &mut ctx,
+                )
+            })
+        } else {
+            #[cfg(not(target_os = "none"))]
+            {
+                base::Status::from_raw(unsafe {
+                    sys::iree_hal_module_create(
+                        instance.ctx,
+                        sys::iree_hal_module_device_policy_default(),
+                        device.group(),
+                        sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
+                        sys::iree_hal_module_debug_sink_null(),
+                        instance.allocator().ctx,
+                        &mut ctx,
+                    )
+                })
+            }
+            #[cfg(target_os = "none")]
+            {
+                unreachable!("bare-metal runtimes always use inline HAL")
+            }
+        };
+        status.into_result()?;
+        Ok(Self {
+            ctx,
+            instance: instance.clone(),
+            archive: None,
+            _not_send_sync: base::not_send_sync(),
+        })
+    }
+
+    /// Supplies embedded ELF executables to inline-dynamic modules. Inline-static
+    /// VMVX modules can share the same module set without using the loader.
+    pub(crate) fn loader(instance: &Instance) -> Result<Self, RuntimeError> {
+        let _guard = base::runtime_lifecycle_guard();
+        let mut loader = core::ptr::null_mut();
         base::Status::from_raw(unsafe {
-            sys::iree_hal_device_group_create_from_device(
-                device.ctx,
+            sys::iree_hal_embedded_elf_loader_create(
+                core::ptr::null_mut(),
                 instance.allocator().ctx,
-                &mut device_group,
+                &mut loader,
             )
         })
         .into_result()?;
+        let mut ctx = core::ptr::null_mut();
         let status = base::Status::from_raw(unsafe {
-            sys::iree_hal_module_create(
+            sys::iree_hal_loader_module_create(
                 instance.ctx,
-                sys::iree_hal_module_device_policy_default(),
-                device_group,
-                sys::iree_hal_module_flag_bits_t_IREE_HAL_MODULE_FLAG_SYNCHRONOUS,
-                sys::iree_hal_module_debug_sink_null(),
+                sys::iree_hal_loader_module_flag_bits_t_IREE_HAL_LOADER_MODULE_FLAG_NONE,
+                1,
+                &mut loader,
                 instance.allocator().ctx,
                 &mut ctx,
             )
         });
-        unsafe {
-            sys::iree_hal_device_group_release(device_group);
-        }
+        unsafe { sys::iree_hal_executable_loader_release(loader) };
         status.into_result()?;
         Ok(Self {
             ctx,
@@ -358,7 +403,6 @@ impl Function {
         I: Type,
         O: Type,
     {
-        let _guard = base::runtime_invocation_guard();
         base::Status::from_raw(unsafe {
             trace!("iree_vm_invoke");
             sys::iree_vm_invoke(

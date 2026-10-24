@@ -1,6 +1,6 @@
 [package]
 name = "eerie-sys"
-version = "0.3.3"
+version = "0.4.0"
 edition = "2021"
 authors = ["Gyungmin Myung"]
 license = "Apache-2.0"
@@ -19,6 +19,9 @@ exclude = [
     "iree/third_party/tracy/",
     "iree/third_party/pybind11/",
     "iree/third_party/renderdoc/",
+    "iree/third_party/printf/",
+    "iree/third_party/googletest/",
+    "iree/third_party/benchmark/",
     "iree/third_party/mkdocs-material/",
     "iree/third_party/flatcc/test/",
     "iree/third_party/flatcc/doc/",
