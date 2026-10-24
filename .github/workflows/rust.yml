@@ -26,7 +26,7 @@ jobs:
         with:
           submodules: true
       - name: Initialize runtime dependencies
-        run: git -C eerie-sys/iree submodule update --init --depth 1 third_party/flatcc third_party/vulkan_headers
+        run: python3 tools/init-runtime-deps.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -81,7 +81,7 @@ jobs:
         with:
           submodules: true
       - name: Initialize runtime dependencies
-        run: git -C eerie-sys/iree submodule update --init --depth 1 third_party/flatcc third_party/vulkan_headers
+        run: python3 tools/init-runtime-deps.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf
