@@ -640,7 +640,7 @@ impl<T: BufferElement> BufferView<T> {
                 T::IREE_ELEMENT_TYPE as sys::iree_hal_element_type_t,
                 sys::iree_hal_encoding_types_t_IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR as _,
                 sys::iree_hal_buffer_params_t {
-                    usage: sys::iree_hal_buffer_usage_bits_t_IREE_HAL_BUFFER_USAGE_DEFAULT,
+                    usage: sys::iree_hal_buffer_usage_bits_t_IREE_HAL_BUFFER_USAGE_DEFAULT as _,
                     access: sys::iree_hal_memory_access_bits_t_IREE_HAL_MEMORY_ACCESS_ALL as _,
                     type_: (sys::iree_hal_memory_type_bits_t_IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL
                         | if inline {
