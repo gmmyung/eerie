@@ -64,6 +64,9 @@ fn generate_binding(
         .clang_arg(format!("-I{}", include_path.display()))
         .size_t_is_usize(true)
         .blocklist_function("^(bcmp|memcmp|memcpy|memmove|memset|strlen)$")
+        // glibc exposes these both as macros and enum variants. They are not
+        // part of IREE's API and would otherwise generate duplicate constants.
+        .blocklist_item("^FP_(NAN|INFINITE|ZERO|SUBNORMAL|NORMAL)$")
         .derive_default(true)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
