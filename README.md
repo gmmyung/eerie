@@ -11,7 +11,8 @@ The API is experimental and may change between releases. Eerie 0.7 uses
 by IREE 3.11 or earlier.
 
 Using Melior with Eerie's compiler on macOS requires an
-[application build setting](#using-melior-on-macos) to keep their LLVM/MLIR symbols separate.
+[application build setting](#using-melior-on-macos) to keep their LLVM/MLIR
+symbols separate.
 
 ## Installation
 
@@ -66,14 +67,16 @@ This keeps Melior's symbols private while Eerie loads the stock compiler wheel.
 It disables all executable exports; applications that expose a host API to
 plugins need a different export policy. Pass MLIR text or bytecode between the
 two libraries, keeping raw MLIR handles with their originating library.
+For integration test or example targets, use `cargo:rustc-link-arg-tests` or
+`cargo:rustc-link-arg-examples`, respectively, with the same flag.
 
 ### Cross-language LTO
 
-Enable `cross-lang-lto` to build the native runtime with Clang ThinLTO on Linux
-and macOS.
-This requires compatible Rust/LLVM tools and an application linker configured
-for cross-language LTO. See the [setup guide](CONTRIBUTING.md#cross-language-lto)
-for a matching Nix environment and application configuration.
+The optional `cross-lang-lto` feature builds the native runtime with Clang
+ThinLTO on Linux and macOS. It requires compatible Rust/LLVM tools and an
+application linker configured for cross-language LTO. See the
+[setup guide](CONTRIBUTING.md#cross-language-lto) for a matching Nix environment
+and application configuration.
 
 ## Compile and run a model
 
