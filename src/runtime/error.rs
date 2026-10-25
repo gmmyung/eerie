@@ -1,4 +1,3 @@
-extern crate alloc;
 use alloc::string::String;
 
 pub use super::base::StatusError;

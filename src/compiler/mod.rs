@@ -30,6 +30,17 @@ impl Error {
         unsafe { api().ireeCompilerErrorDestroy(ptr) }
         Self { message }
     }
+
+    fn check(ptr: *mut sys::iree_compiler_error_t) -> Result<(), CompilerError> {
+        if ptr.is_null() {
+            Ok(())
+        } else {
+            Err(CompilerError::IREECompilerError(
+                Self::from_ptr(ptr),
+                Diagnostics::default(),
+            ))
+        }
+    }
 }
 
 struct StringCapture {
@@ -37,15 +48,31 @@ struct StringCapture {
 }
 
 impl StringCapture {
-    fn push_cstr(&mut self, value: *const std::os::raw::c_char) {
-        if value.is_null() {
+    extern "C" fn cstr_callback(
+        value: *const std::os::raw::c_char,
+        user_data: *mut std::ffi::c_void,
+    ) {
+        if value.is_null() || user_data.is_null() {
             return;
         }
-        let value = unsafe { CStr::from_ptr(value) }
-            .to_string_lossy()
-            .into_owned();
-        debug!("Captured string: {}", value);
-        self.values.push(value);
+        let length = unsafe { CStr::from_ptr(value) }.to_bytes().len();
+        Self::callback(value, length, user_data);
+    }
+
+    extern "C" fn callback(
+        value: *const std::os::raw::c_char,
+        length: usize,
+        user_data: *mut std::ffi::c_void,
+    ) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if value.is_null() || user_data.is_null() {
+                return;
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(value.cast(), length) };
+            let value = String::from_utf8_lossy(bytes).into_owned();
+            debug!("Captured string: {}", value);
+            unsafe { &mut *(user_data as *mut Self) }.values.push(value);
+        }));
     }
 }
 
@@ -236,43 +263,17 @@ impl Compiler {
         }
     }
 
-    extern "C" fn capture_registered_hal_target_backend_callback(
-        backend: *const std::os::raw::c_char,
-        user_data: *mut std::ffi::c_void,
-    ) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            debug!("Capturing registered HAL target backend");
-            if user_data.is_null() {
-                return;
-            }
-            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(backend);
-        }));
-    }
-
     /// Enumerates the registered HAL target backends.
     pub fn get_registered_hal_target_backends(&self) -> Vec<String> {
         let mut registered_hal_target_backends = StringCapture { values: Vec::new() };
         debug!("Enumerating registered HAL target backends");
         unsafe {
             api().ireeCompilerEnumerateRegisteredHALTargetBackends(
-                Some(Self::capture_registered_hal_target_backend_callback),
+                Some(StringCapture::cstr_callback),
                 &mut registered_hal_target_backends as *mut StringCapture as *mut _,
             );
         }
         registered_hal_target_backends.values
-    }
-
-    extern "C" fn capture_plugin_callback(
-        backend: *const std::os::raw::c_char,
-        user_data: *mut std::ffi::c_void,
-    ) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            debug!("Capturing registered plugin");
-            if user_data.is_null() {
-                return;
-            }
-            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(backend);
-        }));
     }
 
     /// Enumerates the registered plugins.
@@ -281,7 +282,7 @@ impl Compiler {
         debug!("Enumerating plugins");
         unsafe {
             api().ireeCompilerEnumeratePlugins(
-                Some(Self::capture_plugin_callback),
+                Some(StringCapture::cstr_callback),
                 &mut plugins as *mut StringCapture as *mut _,
             );
         }
@@ -401,28 +402,8 @@ impl<'a> Session<'a> {
                 api().ireeCompilerSessionSetFlags(self.ctx, argv.len() as i32, ptr_array.as_ptr());
             debug!("Session flags set");
         }
-        if err_ptr.is_null() {
-            Ok(self)
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
-    }
-
-    extern "C" fn capture_flags_callback(
-        flag: *const std::os::raw::c_char,
-        _length: usize,
-        user_data: *mut std::ffi::c_void,
-    ) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            debug!("Capturing session flags");
-            if user_data.is_null() {
-                return;
-            }
-            unsafe { &mut *(user_data as *mut StringCapture) }.push_cstr(flag);
-        }));
+        Error::check(err_ptr)?;
+        Ok(self)
     }
 
     /// Gets textual flags actually in effect from any source. Optionally, only
@@ -434,7 +415,7 @@ impl<'a> Session<'a> {
             api().ireeCompilerSessionGetFlags(
                 self.ctx,
                 non_default_only,
-                Some(Self::capture_flags_callback),
+                Some(StringCapture::callback),
                 &mut flags as *mut StringCapture as *mut _,
             );
         }
@@ -628,7 +609,7 @@ impl<'a> Invocation<'a> {
     extern "C" fn capture_diagnostics_callback(
         severity: sys::iree_compiler_diagnostic_severity_t,
         message: *const std::os::raw::c_char,
-        _length: usize,
+        length: usize,
         user_data: *mut std::ffi::c_void,
     ) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -636,9 +617,8 @@ impl<'a> Invocation<'a> {
             if message.is_null() || user_data.is_null() {
                 return;
             }
-            let message = unsafe { CStr::from_ptr(message) }
-                .to_string_lossy()
-                .into_owned();
+            let bytes = unsafe { std::slice::from_raw_parts(message.cast(), length) };
+            let message = String::from_utf8_lossy(bytes).into_owned();
             let diagnostic = match severity {
                 sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_NOTE => {
                     Diagnostic::Note(message)
@@ -907,14 +887,8 @@ impl<'a> Invocation<'a> {
         let output_ptr = output.as_ptr();
         let err_ptr =
             unsafe { api().ireeCompilerInvocationOutputHALExecutable(self.ctx, output_ptr) };
-        if err_ptr.is_null() {
-            Ok(self)
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(self)
     }
 }
 
@@ -956,18 +930,12 @@ impl<'a, 'b> Source<'a, 'b> {
             debug!("Opening file");
             api().ireeCompilerSourceOpenFile(session.ctx, file.as_ptr(), &mut source_ptr)
         };
-        if err_ptr.is_null() {
-            Ok(Source {
-                ctx: source_ptr,
-                session,
-                _phantom: PhantomData,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(Self {
+            ctx: source_ptr,
+            session,
+            _phantom: PhantomData,
+        })
     }
 
     fn wrap_buffer(
@@ -976,13 +944,12 @@ impl<'a, 'b> Source<'a, 'b> {
         nullterm: bool,
     ) -> Result<Self, CompilerError> {
         debug!("Creating source from buffer");
-        let buf_name = CString::new("buffer")?;
         let mut source_ptr = std::ptr::null_mut();
         debug!("len: {}", buf.len());
         let err_ptr = unsafe {
             api().ireeCompilerSourceWrapBuffer(
                 session.ctx,
-                buf_name.as_ptr(),
+                c"buffer".as_ptr(),
                 buf.as_ptr() as *const core::ffi::c_char,
                 buf.len(),
                 nullterm,
@@ -990,19 +957,12 @@ impl<'a, 'b> Source<'a, 'b> {
             )
         };
 
-        debug!("buffer name: {:?}", buf_name);
-        if err_ptr.is_null() {
-            Ok(Source {
-                ctx: source_ptr,
-                session,
-                _phantom: PhantomData,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(Self {
+            ctx: source_ptr,
+            session,
+            _phantom: PhantomData,
+        })
     }
 
     /// Creates a source from a CStr.
@@ -1045,22 +1005,16 @@ impl<'a, 'b> Source<'a, 'b> {
                 &mut sources as *mut SourceCapture as *mut std::ffi::c_void,
             )
         };
-        if err_ptr.is_null() {
-            Ok(sources
-                .values
-                .into_iter()
-                .map(|ctx| Source {
-                    ctx,
-                    session: self.session,
-                    _phantom: PhantomData,
-                })
-                .collect())
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(sources
+            .values
+            .into_iter()
+            .map(|ctx| Self {
+                ctx,
+                session: self.session,
+                _phantom: PhantomData,
+            })
+            .collect())
     }
 }
 
@@ -1085,14 +1039,7 @@ pub trait Output {
                 data.len(),
             )
         };
-        if err_ptr.is_null() {
-            Ok(())
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)
     }
 }
 
@@ -1124,17 +1071,11 @@ impl<'a> FileNameOutput<'a> {
         let path = path_to_cstring(path)?;
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { api().ireeCompilerOutputOpenFile(path.as_ptr(), &mut output_ptr) };
-        if err_ptr.is_null() {
-            Ok(FileNameOutput {
-                ctx: output_ptr,
-                _compiler: compiler,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(Self {
+            ctx: output_ptr,
+            _compiler: compiler,
+        })
     }
 }
 
@@ -1171,18 +1112,12 @@ impl<'a, 'b> FileOutput<'a, 'b> {
         let fd = duplicate_output_fd(file)?;
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { api().ireeCompilerOutputOpenFD(fd, &mut output_ptr) };
-        if err_ptr.is_null() {
-            Ok(FileOutput {
-                ctx: output_ptr,
-                _marker: PhantomData,
-                _compiler: compiler,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(Self {
+            ctx: output_ptr,
+            _marker: PhantomData,
+            _compiler: compiler,
+        })
     }
 }
 
@@ -1213,17 +1148,11 @@ impl<'a> MemBufferOutput<'a> {
         debug!("Creating membuffer output");
         let mut output_ptr = std::ptr::null_mut();
         let err_ptr = unsafe { api().ireeCompilerOutputOpenMembuffer(&mut output_ptr) };
-        if err_ptr.is_null() {
-            Ok(MemBufferOutput {
-                ctx: output_ptr,
-                _compiler: compiler,
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(Self {
+            ctx: output_ptr,
+            _compiler: compiler,
+        })
     }
 
     /// Maps the memory buffer to a slice
@@ -1233,16 +1162,10 @@ impl<'a> MemBufferOutput<'a> {
         let mut data_length = 0;
         let err_ptr =
             unsafe { api().ireeCompilerOutputMapMemory(self.ctx, &mut data_ptr, &mut data_length) };
-        if err_ptr.is_null() {
-            Ok(unsafe {
-                std::slice::from_raw_parts(data_ptr as *const u8, data_length.try_into().unwrap())
-            })
-        } else {
-            Err(CompilerError::IREECompilerError(
-                Error::from_ptr(err_ptr),
-                Diagnostics::default(),
-            ))
-        }
+        Error::check(err_ptr)?;
+        Ok(unsafe {
+            std::slice::from_raw_parts(data_ptr as *const u8, data_length.try_into().unwrap())
+        })
     }
 }
 
@@ -1266,4 +1189,31 @@ pub enum CompilerError {
     FileNotFound(String),
     #[error(transparent)]
     FileIoError(#[from] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captured_flags_respect_the_provided_length() {
+        let bytes = b"--flag=\xfftrailing\0";
+        let mut capture = StringCapture { values: Vec::new() };
+        StringCapture::callback(bytes.as_ptr().cast(), 8, &mut capture as *mut _ as *mut _);
+        assert_eq!(capture.values, ["--flag=\u{fffd}"]);
+    }
+
+    #[test]
+    fn captured_diagnostics_respect_the_provided_length() {
+        let bytes = b"errortrailing\0";
+        let diagnostics = Diagnostics::default();
+        Invocation::capture_diagnostics_callback(
+            sys::iree_compiler_diagnostic_severity_t_IREE_COMPILER_DIAGNOSTIC_SEVERITY_ERROR,
+            bytes.as_ptr().cast(),
+            5,
+            &diagnostics as *const _ as *mut _,
+        );
+        let messages = diagnostics.data.lock().unwrap();
+        assert!(matches!(messages.as_slice(), [Diagnostic::Error(message)] if message == "error"));
+    }
 }

@@ -12,6 +12,7 @@ Requires `eerie-sys 0.5.0`.
 - Include compiler APIs in docs.rs builds.
 - Add an explicit `cross-lang-lto` feature for the runtime on Linux and macOS with Clang ThinLTO, a matching Nix toolchain, and a regression proving that IREE C code is inlined into Rust. Application linker-plugin configuration is required. The macOS shell supplies a Darwin linker adapter and ARM builds align the native target's `ccidx` requirement with Rust.
 - Stop translating extra Rust codegen flags into native C/C++ flags; native LTO is selected explicitly by its Cargo feature.
+- Simplify private VM argument lists and compiler callbacks, scope logging/error dependencies to their features, and remove unused Linux C++ runtime linkage. Honor compiler callback byte lengths and release status-message storage when formatting fails.
 - Restrict bare-metal math/libc shims to bare-metal targets and native build dependencies to the features that need them. Native driver selection now follows Cargo features; Vulkan is no longer compiled into default Linux/Windows builds.
 - Remove legacy compiler environment overrides, system-library searching, redundant status-code mappings, unused dependency/configuration, and the obsolete singleton initialization error and free API-version helper. Trim packaged sources for disabled components.
 

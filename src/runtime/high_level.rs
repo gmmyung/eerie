@@ -1,12 +1,10 @@
-extern crate alloc;
-
 use alloc::{borrow::Cow, format, string::String, vec, vec::Vec};
 
 use super::{
     base,
     error::RuntimeError,
     hal::{self, BufferElement, BufferView, Value},
-    vm::{self, ToRef},
+    vm,
 };
 
 /// Runtime HAL driver name.
@@ -262,11 +260,11 @@ impl Runtime {
         {
             let registry = hal::DriverRegistry::with_available_drivers()?;
             let hal_driver = registry.create_driver(driver.as_str())?;
-            hal_driver
+            Ok(hal_driver
                 .available_devices()?
                 .into_iter()
-                .map(|info| Ok(DeviceInfo::from_hal(driver.clone(), info)))
-                .collect()
+                .map(|info| DeviceInfo::from_hal(driver.clone(), info))
+                .collect())
         }
     }
 
@@ -326,31 +324,6 @@ impl Program {
     }
 }
 
-fn push_value(
-    list: &mut vm::List<vm::Undefined>,
-    instance: &vm::Instance,
-    value: &Value,
-) -> Result<(), RuntimeError> {
-    match value {
-        Value::Bool(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::U8(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::U16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::U32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::U64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::I8(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::I16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::I32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::I64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        #[cfg(feature = "half")]
-        Value::F16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::F32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        Value::F64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-        #[cfg(feature = "half")]
-        Value::Bf16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
-    }
-    Ok(())
-}
-
 /// A resolved program function.
 pub struct Function {
     inner: vm::Function,
@@ -395,12 +368,12 @@ impl Function {
         // Buffer values are declared above the guard so their device handles
         // are dropped after it, including when an invocation returns an error.
         let _guard = base::runtime_invocation_guard();
-        let mut input_list = vm::List::<vm::Undefined>::new(inputs.len(), &self.instance)?;
+        let mut input_list = vm::List::new(inputs.len(), &self.instance)?;
         for input in &inputs {
-            push_value(&mut input_list, &self.instance, input)?;
+            input_list.push(input)?;
         }
 
-        let mut output_list = vm::List::<vm::Undefined>::new(output_count, &self.instance)?;
+        let mut output_list = vm::List::new(output_count, &self.instance)?;
         self.inner.invoke(&input_list, &mut output_list)?;
 
         for index in 0..output_count {

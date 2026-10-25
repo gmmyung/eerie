@@ -1,5 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
+#[cfg(feature = "runtime")]
+extern crate alloc;
 #[cfg(all(target_os = "none", not(feature = "std"), feature = "runtime"))]
 extern crate tinyrlibc as _;
 
