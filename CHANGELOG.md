@@ -10,7 +10,7 @@ Requires `eerie-sys 0.5.0`.
 - Allow compiler handles to be created, cloned, and dropped independently while sharing one retained process-wide initialization. Add `Compiler::with_library`, `library_path`, and `api_version`.
 - Raw compiler bindings now expose an `eerie_sys::compiler::IreeCompiler` API table instead of linker-resolved free functions. Raw callers must load and initialize a table and retain it for every object created through it.
 - Include compiler APIs in docs.rs builds.
-- Add an explicit `cross-lang-lto` feature for the runtime on Linux with Clang ThinLTO, a matching Nix toolchain, and a regression proving that IREE C code is inlined into Rust. Application linker-plugin configuration is required.
+- Add an explicit `cross-lang-lto` feature for the runtime on Linux and macOS with Clang ThinLTO, a matching Nix toolchain, and a regression proving that IREE C code is inlined into Rust. Application linker-plugin configuration is required. The macOS shell supplies a Darwin linker adapter and ARM builds align the native target's `ccidx` requirement with Rust.
 - Stop translating extra Rust codegen flags into native C/C++ flags; native LTO is selected explicitly by its Cargo feature.
 - Restrict bare-metal math/libc shims to bare-metal targets and native build dependencies to the features that need them. Native driver selection now follows Cargo features; Vulkan is no longer compiled into default Linux/Windows builds.
 - Remove legacy compiler environment overrides, system-library searching, redundant status-code mappings, unused dependency/configuration, and the obsolete singleton initialization error and free API-version helper. Trim packaged sources for disabled components.

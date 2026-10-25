@@ -160,9 +160,9 @@ fn main() {
         }
         #[cfg(feature = "cross-lang-lto")]
         {
-            assert_eq!(
-                target_os, "linux",
-                "cross-lang-lto currently supports hosted Linux targets only"
+            assert!(
+                matches!(target_os.as_str(), "linux" | "macos"),
+                "cross-lang-lto currently supports hosted Linux and macOS targets only"
             );
         }
         let build_path =

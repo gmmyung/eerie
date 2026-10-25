@@ -114,18 +114,21 @@
             });
           };
         in
-        shells // lib.optionalAttrs pkgs.stdenv.isLinux {
+        shells // {
           cross-lang-lto = shells.default.overrideAttrs (old: let
             ltoLlvm = pkgs.rustc.llvmPackages;
             target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
             targetKey = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] target);
+            darwinLinker = pkgs.writeShellScriptBin "eerie-lto-linker" ''
+              exec ${python}/bin/python ${./tools/macos_lto_linker.py} ${ltoLlvm.clang}/bin/clang "$@"
+            '';
           in {
             nativeBuildInputs = old.nativeBuildInputs ++ [
               ltoLlvm.clang
               ltoLlvm.libclang
               ltoLlvm.llvm
               ltoLlvm.lld
-            ];
+            ] ++ lib.optionals pkgs.stdenv.isDarwin [ darwinLinker ];
             LIBCLANG_PATH = "${ltoLlvm.libclang.lib}/lib";
             # Compiler setup hooks run after derivation attributes are loaded.
             shellHook = old.shellHook + ''
@@ -134,7 +137,9 @@
             '';
             # Keep build scripts and proc macros on the host configuration.
             CARGO_BUILD_TARGET = target;
-            "CARGO_TARGET_${targetKey}_LINKER" = "${ltoLlvm.clang}/bin/clang";
+            "CARGO_TARGET_${targetKey}_LINKER" = if pkgs.stdenv.isDarwin
+              then "${darwinLinker}/bin/eerie-lto-linker"
+              else "${ltoLlvm.clang}/bin/clang";
             "CARGO_TARGET_${targetKey}_RUSTFLAGS" = "-Clinker-plugin-lto -Clink-arg=-fuse-ld=lld";
           });
         }

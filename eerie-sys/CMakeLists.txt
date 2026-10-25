@@ -12,6 +12,14 @@ if(EERIE_CROSS_LANG_LTO)
   # Apply this to the runtime and its C dependencies, including FlatCC.
   add_compile_options(-flto=thin)
   add_link_options(-flto=thin -fuse-ld=lld)
+  if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    # Clang adds ccidx to its Apple M1 baseline, while rustc's baseline lacks
+    # it. LLVM refuses cross-language inlining when the callee requires it.
+    add_compile_options(
+      "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Xclang=-target-feature>"
+      "$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Xclang=-ccidx>"
+    )
+  endif()
 endif()
 
 add_subdirectory(iree)

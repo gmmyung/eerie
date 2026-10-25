@@ -51,7 +51,8 @@ the Python executable used for discovery.
 
 ### Cross-language LTO
 
-Enable `cross-lang-lto` to build the native runtime with Clang ThinLTO on Linux.
+Enable `cross-lang-lto` to build the native runtime with Clang ThinLTO on Linux
+and macOS.
 This requires compatible Rust/LLVM tools and an application linker configured
 for cross-language LTO. See the [setup guide](CONTRIBUTING.md#cross-language-lto)
 for a matching Nix environment and application configuration.
