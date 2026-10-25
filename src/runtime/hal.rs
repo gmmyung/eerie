@@ -1,5 +1,3 @@
-extern crate alloc;
-
 #[cfg(not(target_os = "none"))]
 use alloc::string::String;
 use alloc::{borrow::Cow, format, vec::Vec};

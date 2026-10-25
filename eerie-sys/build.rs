@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(any(feature = "compiler", feature = "runtime"))]
 fn binding_builder(
-    sysroot: Option<&PathBuf>,
+    sysroot: Option<&Path>,
     header_path: &Path,
     include_path: &Path,
 ) -> bindgen::Builder {
@@ -52,7 +52,7 @@ fn generate_compiler_bindings(iree_path: &Path, out_path: &Path) {
 
 #[cfg(feature = "runtime")]
 fn generate_runtime_bindings(
-    sysroot: Option<&PathBuf>,
+    sysroot: Option<&Path>,
     header_path: &Path,
     include_path: &Path,
     bindings_path: &Path,
@@ -123,6 +123,16 @@ fn main() {
     let iree_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("iree");
     #[cfg(any(feature = "compiler", feature = "runtime"))]
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    #[cfg(any(feature = "compiler", feature = "runtime"))]
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    #[cfg(any(feature = "compiler", feature = "runtime"))]
+    if target_os == "windows" {
+        assert_eq!(
+            env::var("CARGO_CFG_TARGET_ENV").as_deref(),
+            Ok("msvc"),
+            "Windows builds require the MSVC Rust target"
+        );
+    }
     #[cfg(feature = "runtime")]
     let bare_metal_sync_include_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/bare_metal_sync/include");
@@ -130,27 +140,14 @@ fn main() {
     // Generate a runtime-loaded API table. Building the crate does not require
     // an installed compiler library; discovery happens in Compiler::new().
     #[cfg(feature = "compiler")]
-    {
-        if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-            assert_eq!(
-                env::var("CARGO_CFG_TARGET_ENV").as_deref(),
-                Ok("msvc"),
-                "Windows builds require the MSVC Rust target"
-            );
-        }
-        generate_compiler_bindings(&iree_path, &out_path);
-    }
+    generate_compiler_bindings(&iree_path, &out_path);
 
     // The runtime feature enables the IREE runtime. It configures available runtime backends based
     // on the target os and architecture. The IREE runtime is built from source using CMake and
     // clang/llvm. Other compilers can be used as well, but clang is recommended when cross-compiling.
     #[cfg(feature = "runtime")]
     {
-        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-        let msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
-        if target_os == "windows" && !msvc {
-            panic!("Windows builds require the MSVC Rust target");
-        }
+        let msvc = target_os == "windows";
         let bare_metal = target_os == "none";
         if bare_metal && cfg!(feature = "std") {
             panic!("The std feature cannot be used for target_os = \"none\"");
@@ -215,14 +212,11 @@ fn main() {
             None
         };
 
+        let on_off = |enabled| if enabled { "ON" } else { "OFF" };
         let mut config = cmake_config(Path::new(env!("CARGO_MANIFEST_DIR")));
         config.define(
             "EERIE_CROSS_LANG_LTO",
-            if cfg!(feature = "cross-lang-lto") {
-                "ON"
-            } else {
-                "OFF"
-            },
+            on_off(cfg!(feature = "cross-lang-lto")),
         );
         if msvc {
             // Keep archive paths independent of Visual Studio's multi-config
@@ -247,7 +241,6 @@ fn main() {
         let mut cmake_defs = RUNTIME_CMAKE_DEFINITIONS.to_vec();
         // Explicit values keep Cargo features authoritative, including when
         // CMake reuses a cache from an earlier build.
-        let on_off = |enabled| if enabled { "ON" } else { "OFF" };
         cmake_defs.extend([
             ("IREE_HAL_DRIVER_LOCAL_SYNC", on_off(!bare_metal)),
             ("IREE_HAL_DRIVER_LOCAL_TASK", on_off(!bare_metal)),
@@ -267,7 +260,7 @@ fn main() {
         // If bare metal, use the following config.
         if bare_metal {
             // CMake config for no-std runtime build
-            cmake_defs.extend(vec![
+            cmake_defs.extend([
                 ("IREE_ENABLE_THREADING", "OFF"),
                 ("EERIE_BARE_METAL", "ON"),
                 ("IREE_ENABLE_POSIX", "OFF"),
@@ -360,7 +353,7 @@ fn main() {
             }
         }
         generate_runtime_bindings(
-            sysroot.as_ref(),
+            sysroot.as_deref(),
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime_api.h"),
             &iree_path.join("runtime/src"),
             &out_path.join("runtime.rs"),
@@ -385,10 +378,6 @@ fn main() {
         println!("cargo:rustc-link-lib=flatcc_parsing");
 
         match target_os.as_str() {
-            "linux" => {
-                println!("cargo:rustc-link-lib=stdc++");
-            }
-
             "macos" => {
                 println!("cargo:rustc-link-lib=framework=Foundation");
                 println!("cargo:rustc-link-lib=framework=Metal");
@@ -407,10 +396,7 @@ fn main() {
                 }
             }
 
-            "none" => {
-                // Rust's compiler_builtins supplies target ABI helpers without
-                // pulling in libgcc's hosted unwinder or a C runtime.
-            }
+            "linux" | "none" => {}
             _ => {
                 panic!("Only Linux, macOS, Windows MSVC, and no-std targets are supported");
             }

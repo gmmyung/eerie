@@ -1,7 +1,4 @@
-extern crate alloc;
-
 use alloc::{rc::Rc, string::String, vec::Vec};
-use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use std::sync::Mutex;
 
@@ -11,12 +8,8 @@ use log::trace;
 use super::{
     base::{self, ConstByteSpan, StringView},
     error::RuntimeError,
-    hal::{BufferElement, BufferView, Device, Value},
+    hal::{Device, Value},
 };
-
-mod private {
-    pub trait Sealed {}
-}
 
 #[cfg(feature = "std")]
 // Owns the root VM instance ref for the program lifetime. HAL type adapters are
@@ -393,15 +386,7 @@ impl Function {
         Ok(result_count)
     }
 
-    pub(crate) fn invoke<I, O>(
-        &self,
-        inputs: &List<I>,
-        outputs: &mut List<O>,
-    ) -> Result<(), RuntimeError>
-    where
-        I: Type,
-        O: Type,
-    {
+    pub(crate) fn invoke(&self, inputs: &List, outputs: &mut List) -> Result<(), RuntimeError> {
         base::Status::from_raw(unsafe {
             trace!("iree_vm_invoke");
             sys::iree_vm_invoke(
@@ -419,126 +404,20 @@ impl Function {
     }
 }
 
-impl Clone for Function {
-    fn clone(&self) -> Self {
-        Self {
-            ctx: self.ctx,
-            context: self.context.clone(),
-            _not_send_sync: base::not_send_sync(),
-        }
-    }
-}
-
-/// Trait for VM list element types.
-pub(crate) trait Type: private::Sealed {
-    fn type_def(instance: &Instance) -> sys::iree_vm_type_def_t;
-}
-
-pub(crate) trait RefObject: private::Sealed {
-    fn ref_type(instance: &Instance) -> sys::iree_vm_ref_type_t;
-}
-
-/// Trait for objects that can be converted to VM refs.
-pub(crate) trait ToRef: RefObject {
-    fn to_ref(&self, instance: &Instance) -> Result<Ref<Self>, RuntimeError>
-    where
-        Self: Sized;
-}
-
-/// A VM reference.
-pub(crate) struct Ref<T: RefObject> {
-    pub(crate) ctx: sys::iree_vm_ref_t,
-    instance: Instance,
-    _marker: PhantomData<T>,
-    _not_send_sync: base::NotSendSync,
-}
-
-impl<T: RefObject> private::Sealed for Ref<T> {}
-
-impl<T: RefObject> Type for Ref<T> {
-    fn type_def(instance: &Instance) -> sys::iree_vm_type_def_t {
-        let mut out = sys::iree_vm_type_def_t::default();
-        out.set_value_type_bits(sys::iree_vm_value_type_e_IREE_VM_VALUE_TYPE_NONE as usize);
-        out.set_ref_type_bits(
-            T::ref_type(instance) / (1usize << sys::IREE_VM_REF_TYPE_TAG_BITS as usize),
-        );
-        out
-    }
-}
-
-impl<T: RefObject> Clone for Ref<T> {
-    fn clone(&self) -> Self {
-        let mut source = self.ctx;
-        let mut ctx = sys::iree_vm_ref_t::default();
-        unsafe {
-            sys::iree_vm_ref_retain(&mut source, &mut ctx);
-        }
-        Self {
-            ctx,
-            instance: self.instance.clone(),
-            _marker: PhantomData,
-            _not_send_sync: base::not_send_sync(),
-        }
-    }
-}
-
-impl<T: RefObject> Drop for Ref<T> {
-    fn drop(&mut self) {
-        unsafe {
-            trace!("iree_vm_ref_release");
-            sys::iree_vm_ref_release(&mut self.ctx);
-        }
-    }
-}
-
-impl<T: BufferElement> RefObject for BufferView<T> {
-    fn ref_type(_instance: &Instance) -> sys::iree_vm_ref_type_t {
-        unsafe { sys::iree_hal_buffer_view_registration }
-    }
-}
-
-impl<T: BufferElement> private::Sealed for BufferView<T> {}
-
-impl<T: BufferElement> ToRef for BufferView<T> {
-    fn to_ref(&self, instance: &Instance) -> Result<Ref<Self>, RuntimeError> {
-        let ctx = unsafe { sys::iree_hal_buffer_view_retain_ref(self.ctx) };
-        Ok(Ref {
-            ctx,
-            instance: instance.clone(),
-            _marker: PhantomData,
-            _not_send_sync: base::not_send_sync(),
-        })
-    }
-}
-
-/// Undefined list element type. Use for heterogenous VM argument/result lists.
-pub(crate) struct Undefined;
-
-impl private::Sealed for Undefined {}
-
-impl Type for Undefined {
-    fn type_def(_: &Instance) -> sys::iree_vm_type_def_t {
-        let mut out = sys::iree_vm_type_def_t::default();
-        out.set_value_type_bits(sys::iree_vm_value_type_e_IREE_VM_VALUE_TYPE_NONE as usize);
-        out.set_ref_type_bits(sys::iree_vm_ref_type_bits_t_IREE_VM_REF_TYPE_NULL as usize);
-        out
-    }
-}
-
-/// An owned dynamic VM list.
-pub(crate) struct List<T: Type> {
+/// An owned heterogeneous list of VM buffer-view arguments or results.
+pub(crate) struct List {
     pub(crate) ctx: *mut sys::iree_vm_list_t,
-    instance: Instance,
-    _marker: PhantomData<T>,
+    _instance: Instance,
     _not_send_sync: base::NotSendSync,
 }
 
-impl<T: Type> List<T> {
+impl List {
     pub(crate) fn new(initial_capacity: usize, instance: &Instance) -> Result<Self, RuntimeError> {
         let mut ctx = core::ptr::null_mut();
         base::Status::from_raw(unsafe {
             sys::iree_vm_list_create(
-                T::type_def(instance),
+                // An undefined element type permits heterogeneous buffer views.
+                sys::iree_vm_type_def_t::default(),
                 initial_capacity,
                 instance.allocator().ctx,
                 &mut ctx,
@@ -547,14 +426,34 @@ impl<T: Type> List<T> {
         .into_result()?;
         Ok(Self {
             ctx,
-            instance: instance.clone(),
-            _marker: PhantomData,
+            _instance: instance.clone(),
             _not_send_sync: base::not_send_sync(),
         })
     }
 
-    pub(crate) fn push_ref<A: RefObject>(&mut self, value: &Ref<A>) -> Result<(), RuntimeError> {
-        base::Status::from_raw(unsafe { sys::iree_vm_list_push_ref_retain(self.ctx, &value.ctx) })
+    pub(crate) fn push(&mut self, value: &Value) -> Result<(), RuntimeError> {
+        let buffer = match value {
+            Value::Bool(buffer) => buffer.ctx,
+            Value::U8(buffer) => buffer.ctx,
+            Value::U16(buffer) => buffer.ctx,
+            Value::U32(buffer) => buffer.ctx,
+            Value::U64(buffer) => buffer.ctx,
+            Value::I8(buffer) => buffer.ctx,
+            Value::I16(buffer) => buffer.ctx,
+            Value::I32(buffer) => buffer.ctx,
+            Value::I64(buffer) => buffer.ctx,
+            #[cfg(feature = "half")]
+            Value::F16(buffer) => buffer.ctx,
+            Value::F32(buffer) => buffer.ctx,
+            Value::F64(buffer) => buffer.ctx,
+            #[cfg(feature = "half")]
+            Value::Bf16(buffer) => buffer.ctx,
+        };
+        let mut value = unsafe { sys::iree_hal_buffer_view_retain_ref(buffer) };
+        let status = unsafe { sys::iree_vm_list_push_ref_move(self.ctx, &mut value) };
+        // A successful push clears value; a failed push leaves it owned here.
+        unsafe { sys::iree_vm_ref_release(&mut value) };
+        base::Status::from_raw(status)
             .into_result()
             .map_err(Into::into)
     }
@@ -567,9 +466,7 @@ impl<T: Type> List<T> {
         .into_result()?;
         Ok(ctx)
     }
-}
 
-impl List<Undefined> {
     pub(crate) fn get_buffer_view_value(
         &self,
         idx: usize,
@@ -597,21 +494,7 @@ impl List<Undefined> {
     }
 }
 
-impl<T: Type> Clone for List<T> {
-    fn clone(&self) -> Self {
-        unsafe {
-            sys::iree_vm_list_retain(self.ctx);
-        }
-        Self {
-            ctx: self.ctx,
-            instance: self.instance.clone(),
-            _marker: PhantomData,
-            _not_send_sync: base::not_send_sync(),
-        }
-    }
-}
-
-impl<T: Type> Drop for List<T> {
+impl Drop for List {
     fn drop(&mut self) {
         unsafe {
             sys::iree_vm_list_release(self.ctx);

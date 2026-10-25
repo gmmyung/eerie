@@ -1,4 +1,3 @@
-extern crate alloc;
 use alloc::rc::Rc;
 use core::{alloc::Layout, ffi::c_void, fmt::Display, marker::PhantomData};
 use eerie_sys::runtime as sys;
@@ -271,10 +270,10 @@ impl Display for StatusError {
         }) {
             return write!(f, "Status: <failed to convert to string>");
         }
-        let buf =
+        let write_result =
             core::str::from_utf8(unsafe { core::slice::from_raw_parts(bufptr as *const u8, size) })
-                .map_err(|_| core::fmt::Error)?;
-        let write_result = write!(f, "Status: {:?}", buf);
+                .map_err(|_| core::fmt::Error)
+                .and_then(|buf| write!(f, "Status: {:?}", buf));
         unsafe {
             sys::iree_allocator_free(allocator.ctx, bufptr as *mut _);
         }
