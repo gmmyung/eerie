@@ -25,11 +25,11 @@ which needs its toolkit, and Vulkan, which is unsupported on macOS.
 ## Cross-language LTO
 
 The optional `cross-lang-lto` feature builds the runtime and its native C/C++
-dependencies with Clang ThinLTO. It currently supports hosted Linux targets.
+dependencies with Clang ThinLTO. It supports hosted Linux and macOS targets.
 Native LTO is controlled explicitly by the feature; extra Rust flags are not
 translated into C/C++ flags. CMake still uses Cargo's optimization/debug profile.
 
-Use the Linux Nix shell to select Clang, LLVM archive tools, and LLD from the
+Use the Nix shell to select Clang, LLVM archive tools, and LLD from the
 same LLVM package set as Rust, with the application's linker-plugin settings:
 
 ```sh
@@ -42,8 +42,13 @@ The last command compares feature-off and feature-on builds with identical
 Rust linker settings. Both execute the same buffer-rank test; disassembly must
 show that only the feature-on build inlines IREE's C getter into the Rust wrapper.
 
-Without Nix, install compatible Clang, `llvm-ar`, `llvm-ranlib`, and LLD, set
-`CC=clang` and `CXX=clang++`, and configure the application's Cargo target:
+On macOS the shell also provides a linker adapter for rustc's GNU-style LTO
+options. ARM builds omit Clang's additional `ccidx` requirement so LLVM can
+inline C functions into Rust's baseline target. Use the supplied shell on macOS;
+it selects upstream LLVM Clang rather than Xcode's AppleClang.
+
+On Linux without Nix, install compatible Clang, `llvm-ar`, `llvm-ranlib`, and LLD,
+set `CC=clang` and `CXX=clang++`, and configure the application's Cargo target:
 
 ```toml
 # .cargo/config.toml; use your Linux target triple.

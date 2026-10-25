@@ -9,7 +9,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SYMBOL = "eerie_cross_lang_lto_rank"
+SYMBOL = ("_" if sys.platform == "darwin" else "") + "eerie_cross_lang_lto_rank"
 CALL_OR_JUMP = re.compile(r"\b(?:callq?|jmpq?|bl|blr|b|br)\s")
 
 
