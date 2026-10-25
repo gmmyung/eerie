@@ -19,14 +19,16 @@ fn main() {
     let module = Module::parse(&context, include_str!("../../mul.mlir")).unwrap();
     {
         let compiler = compiler.take().unwrap_or_else(|| Compiler::new().unwrap());
-        for _ in 0..3 {
-            // Transfer text, never MLIR handles owned by the other implementation.
-            let text = module.as_operation().to_string();
-            let vmfb = compiler
-                .compile_str(&text, ["--iree-hal-target-backends=vmvx"])
-                .unwrap();
-            assert!(!vmfb.is_empty());
-            assert!(module.as_operation().verify());
+        for backend in ["vmvx", "llvm-cpu"] {
+            for _ in 0..3 {
+                // Transfer text, never MLIR handles owned by the other implementation.
+                let text = module.as_operation().to_string();
+                let vmfb = compiler
+                    .compile_str(&text, [format!("--iree-hal-target-backends={backend}")])
+                    .unwrap();
+                assert!(!vmfb.is_empty());
+                assert!(module.as_operation().verify());
+            }
         }
     }
     assert!(module.as_operation().verify());
