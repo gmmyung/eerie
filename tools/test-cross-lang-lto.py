@@ -14,13 +14,13 @@ CALL_OR_JUMP = re.compile(r"\b(?:callq?|jmpq?|bl|blr|b|br)\s")
 
 
 def probe(features):
-    output = subprocess.check_output([
+    result = subprocess.run([
         "cargo", "test", "--locked", "--release", "--no-default-features",
         "--features", features, "--test", "lto_probe", "--no-run",
         "--message-format=json",
-    ], cwd=ROOT, text=True)
+    ], cwd=ROOT, stdout=subprocess.PIPE, text=True)
     executables = []
-    for line in output.splitlines():
+    for line in result.stdout.splitlines():
         item = json.loads(line)
         if item.get("reason") == "compiler-message":
             print(item["message"]["rendered"], end="", file=sys.stderr)
@@ -30,6 +30,7 @@ def probe(features):
             and item.get("executable")
         ):
             executables.append(item["executable"])
+    result.check_returncode()
     if len(executables) != 1:
         raise RuntimeError(f"expected one LTO probe executable, got {executables}")
     executable = executables[0]

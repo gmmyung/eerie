@@ -126,9 +126,12 @@
               ltoLlvm.llvm
               ltoLlvm.lld
             ];
-            CC = "${ltoLlvm.clang}/bin/clang";
-            CXX = "${ltoLlvm.clang}/bin/clang++";
             LIBCLANG_PATH = "${ltoLlvm.libclang.lib}/lib";
+            # Compiler setup hooks run after derivation attributes are loaded.
+            shellHook = old.shellHook + ''
+              export CC="${ltoLlvm.clang}/bin/clang"
+              export CXX="${ltoLlvm.clang}/bin/clang++"
+            '';
             # Keep build scripts and proc macros on the host configuration.
             CARGO_BUILD_TARGET = target;
             "CARGO_TARGET_${targetKey}_LINKER" = "${ltoLlvm.clang}/bin/clang";
