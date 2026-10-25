@@ -57,6 +57,7 @@ std = ["dep:thiserror", "eerie-sys/std"]
 half = ["dep:half"]
 cuda = ["runtime", "eerie-sys/cuda"]
 vulkan = ["runtime", "eerie-sys/vulkan"]
+cross-lang-lto = ["runtime", "eerie-sys/cross-lang-lto"]
 
 [[example]]
 name = "resnet"

@@ -94,7 +94,7 @@ const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
     ("IREE_HAL_DRIVER_AMDGPU", "OFF"),
     ("IREE_HAL_DRIVER_HIP", "OFF"),
     ("IREE_HAL_DRIVER_NULL", "OFF"),
-    // Rust links this archive, so native compiler LTO must stay disabled.
+    // Cross-language LTO is controlled explicitly below, including FlatCC.
     ("IREE_RUNTIME_OPTIMIZATION_PROFILE", ""),
     ("IREE_BUILD_TESTS", "OFF"),
     ("IREE_BUILD_BENCHMARKS", "OFF"),
@@ -102,6 +102,17 @@ const RUNTIME_CMAKE_DEFINITIONS: &[(&str, &str)] = &[
     ("IREE_BUILD_BINDINGS_TFLITE", "OFF"),
     ("IREE_BUILD_BINDINGS_TFLITE_JAVA", "OFF"),
 ];
+
+#[cfg(feature = "runtime")]
+fn cmake_config(source: &Path) -> cmake::Config {
+    let mut native = cc::Build::new();
+    // Native LTO is an explicit Cargo feature. Do not infer C/C++ flags from
+    // Rust's extra codegen flags; CMake still follows Cargo's build profile.
+    native.inherit_rustflags(false);
+    let mut config = cmake::Config::new(source);
+    config.init_c_cfg(native.clone()).init_cxx_cfg(native);
+    config
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=CMakeLists.txt");
@@ -147,6 +158,13 @@ fn main() {
         if target_os == "macos" && cfg!(feature = "vulkan") {
             panic!("The vulkan feature is not supported on macOS. Use the metal backend instead.");
         }
+        #[cfg(feature = "cross-lang-lto")]
+        {
+            assert_eq!(
+                target_os, "linux",
+                "cross-lang-lto currently supports hosted Linux targets only"
+            );
+        }
         let build_path =
             out_path
                 .join("runtime_build")
@@ -156,6 +174,7 @@ fn main() {
             None
         } else {
             let sysroot_output = cc::Build::new()
+                .inherit_rustflags(false)
                 .get_compiler()
                 .to_command()
                 .arg("--print-sysroot")
@@ -177,7 +196,7 @@ fn main() {
         // iree-c-embed-data, so there has to be a host tool build before the
         // actual runtime cross-build.
         let host_bin_dir = if bare_metal {
-            let mut host_config = cmake::Config::new(&iree_path);
+            let mut host_config = cmake_config(&iree_path);
 
             // CMake config for host tool
             RUNTIME_CMAKE_DEFINITIONS.iter().for_each(|(k, v)| {
@@ -196,7 +215,15 @@ fn main() {
             None
         };
 
-        let mut config = cmake::Config::new(env!("CARGO_MANIFEST_DIR"));
+        let mut config = cmake_config(Path::new(env!("CARGO_MANIFEST_DIR")));
+        config.define(
+            "EERIE_CROSS_LANG_LTO",
+            if cfg!(feature = "cross-lang-lto") {
+                "ON"
+            } else {
+                "OFF"
+            },
+        );
         if msvc {
             // Keep archive paths independent of Visual Studio's multi-config
             // output directories; Ninja still uses the MSVC compiler and CRT.
@@ -307,6 +334,7 @@ fn main() {
             // (notably Debian's Arm packages). Query the compiler for the C
             // header roots instead of deriving a path from a runtime archive.
             let output = cc::Build::new()
+                .inherit_rustflags(false)
                 .get_compiler()
                 .to_command()
                 .env("LC_ALL", "C")

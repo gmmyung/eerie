@@ -110,6 +110,25 @@ jobs:
       - name: Check packaged raw bindings
         run: cargo package --locked -p eerie-sys
 
+  cross-lang-lto:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+      - uses: actions/checkout@v6.0.3
+        with:
+          submodules: true
+      - name: Initialize runtime dependencies
+        run: python3 tools/init-runtime-deps.py
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # 31.11.3
+        with:
+          install_options: --no-daemon
+          extra_nix_config: sandbox = false
+      - name: Test cross-language LTO and verify C inlining
+        run: |
+          nix develop .#cross-lang-lto -c python tools/test-cross-lang-lto.py
+          nix develop .#cross-lang-lto -c cargo test --locked --release --no-default-features --features std,runtime,half,cross-lang-lto
+
   bare-metal:
     runs-on: ubuntu-24.04
     steps:

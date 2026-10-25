@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.26)
 project(eerie_runtime LANGUAGES C CXX)
 
+if(EERIE_CROSS_LANG_LTO)
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "cross-lang-lto requires Clang for C and C++; use CC=clang CXX=clang++ or nix develop .#cross-lang-lto")
+  endif()
+  find_program(_EERIE_LLVM_AR llvm-ar REQUIRED)
+  find_program(_EERIE_LLVM_RANLIB llvm-ranlib REQUIRED)
+  set(CMAKE_AR "${_EERIE_LLVM_AR}")
+  set(CMAKE_RANLIB "${_EERIE_LLVM_RANLIB}")
+  # Apply this to the runtime and its C dependencies, including FlatCC.
+  add_compile_options(-flto=thin)
+  add_link_options(-flto=thin -fuse-ld=lld)
+endif()
+
 add_subdirectory(iree)
 
 # Include inline HAL modules in the same archive as the hosted runtime. Generic
