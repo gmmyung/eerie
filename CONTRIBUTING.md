@@ -22,6 +22,44 @@ developer shell, Ninja, and LLVM.
 Do not use `cargo test --all-features` as a portable check: it enables CUDA,
 which needs its toolkit, and Vulkan, which is unsupported on macOS.
 
+## Cross-language LTO
+
+The optional `cross-lang-lto` feature builds the runtime and its native C/C++
+dependencies with Clang ThinLTO. It currently supports hosted Linux targets.
+Native LTO is controlled explicitly by the feature; extra Rust flags are not
+translated into C/C++ flags. CMake still uses Cargo's optimization/debug profile.
+
+Use the Linux Nix shell to select Clang, LLVM archive tools, and LLD from the
+same LLVM package set as Rust, with the application's linker-plugin settings:
+
+```sh
+nix develop .#cross-lang-lto
+cargo test --locked --release --no-default-features --features std,runtime,half,cross-lang-lto
+python tools/test-cross-lang-lto.py
+```
+
+The last command compares feature-off and feature-on builds with identical
+Rust linker settings. Both execute the same buffer-rank test; disassembly must
+show that only the feature-on build inlines IREE's C getter into the Rust wrapper.
+
+Without Nix, install compatible Clang, `llvm-ar`, `llvm-ranlib`, and LLD, set
+`CC=clang` and `CXX=clang++`, and configure the application's Cargo target:
+
+```toml
+# .cargo/config.toml; use your Linux target triple.
+[build]
+target = "x86_64-unknown-linux-gnu"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-Clinker-plugin-lto", "-Clink-arg=-fuse-ld=lld"]
+```
+
+Then enable `cross-lang-lto` on the `eerie` dependency. These application-level
+settings are required in addition to the feature; Cargo profile `lto` settings
+alone do not arrange the joint Rust/C link. See the
+[Rust toolchain requirements](https://doc.rust-lang.org/rustc/linker-plugin-lto.html).
+
 ## Fixtures and IREE updates
 
 `tools/regenerate-fixtures.py` recreates the full-HAL VMVX, inline VMVX, and

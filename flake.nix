@@ -56,62 +56,86 @@
           darwinPackages = lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
           ];
-        in
-        rec {
-          default = pkgs.mkShell {
-            packages =
-              [
-                pkgs.cargo
-                pkgs.rustc
-                pkgs.rustfmt
-                pkgs.clippy
-                pkgs.cmake
-                pkgs.ninja
-                pkgs.git
-                pkgs.cacert
-                llvm.clang
-                llvm.libclang
-                python
-              ]
-              ++ darwinPackages;
+          shells = rec {
+            default = pkgs.mkShell {
+              packages =
+                [
+                  pkgs.cargo
+                  pkgs.rustc
+                  pkgs.rustfmt
+                  pkgs.clippy
+                  pkgs.cmake
+                  pkgs.ninja
+                  pkgs.git
+                  pkgs.cacert
+                  llvm.clang
+                  llvm.libclang
+                  python
+                ]
+                ++ darwinPackages;
 
-            LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
-            CC = "${llvm.clang}/bin/clang";
-            CXX = "${llvm.clang}/bin/clang++";
-            CMAKE_GENERATOR = "Ninja";
-            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
+              CC = "${llvm.clang}/bin/clang";
+              CXX = "${llvm.clang}/bin/clang++";
+              CMAKE_GENERATOR = "Ninja";
+              SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
-            shellHook = ''
-              if [ -z "''${EERIE_PYTHON:-}" ]; then
-                compiler_venv="''${XDG_CACHE_HOME:-$HOME/.cache}/eerie/iree-compiler-${compilerVersion}-venv"
+              shellHook = ''
+                if [ -z "''${EERIE_PYTHON:-}" ]; then
+                  compiler_venv="''${XDG_CACHE_HOME:-$HOME/.cache}/eerie/iree-compiler-${compilerVersion}-venv"
 
-                if [ ! -x "$compiler_venv/bin/python" ]; then
-                  mkdir -p "$(dirname "$compiler_venv")"
-                  ${python}/bin/python -m virtualenv "$compiler_venv"
+                  if [ ! -x "$compiler_venv/bin/python" ]; then
+                    mkdir -p "$(dirname "$compiler_venv")"
+                    ${python}/bin/python -m virtualenv "$compiler_venv"
+                  fi
+
+                  if ! "$compiler_venv/bin/python" -c 'import importlib.metadata as m; assert m.version("iree-base-compiler") == "${compilerVersion}"' >/dev/null 2>&1; then
+                    "$compiler_venv/bin/python" -m pip install --upgrade pip || exit 1
+                    "$compiler_venv/bin/pip" install "iree-base-compiler==${compilerVersion}" || exit 1
+                  fi
+
+                  export PATH="$compiler_venv/bin:$PATH"
                 fi
-
-                if ! "$compiler_venv/bin/python" -c 'import importlib.metadata as m; assert m.version("iree-base-compiler") == "${compilerVersion}"' >/dev/null 2>&1; then
-                  "$compiler_venv/bin/python" -m pip install --upgrade pip || exit 1
-                  "$compiler_venv/bin/pip" install "iree-base-compiler==${compilerVersion}" || exit 1
-                fi
-
-                export PATH="$compiler_venv/bin:$PATH"
-              fi
-            '';
+              '';
+            };
+            # Melior owns a separate LLVM/MLIR build. Keep its large dependencies
+            # out of the ordinary shell and use this for coexistence regression tests.
+            melior = default.overrideAttrs (old: {
+              nativeBuildInputs = old.nativeBuildInputs ++ [
+                meliorLlvm.llvm.dev
+                meliorLlvm.llvm.lib
+                meliorLlvm.mlir
+                pkgs.zlib
+                pkgs.libxml2
+              ];
+              MLIR_SYS_220_PREFIX = "${meliorConfig}";
+              TABLEGEN_220_PREFIX = "${meliorConfig}";
+              "CARGO_TARGET_${lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget)}_LINKER" = "${meliorLlvm.clang}/bin/clang";
+            });
           };
-          # Melior owns a separate LLVM/MLIR build. Keep its large dependencies
-          # out of the ordinary shell and use this for coexistence regression tests.
-          melior = default.overrideAttrs (old: {
+        in
+        shells // lib.optionalAttrs pkgs.stdenv.isLinux {
+          cross-lang-lto = shells.default.overrideAttrs (old: let
+            ltoLlvm = pkgs.rustc.llvmPackages;
+            target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+            targetKey = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] target);
+          in {
             nativeBuildInputs = old.nativeBuildInputs ++ [
-              meliorLlvm.llvm.dev
-              meliorLlvm.llvm.lib
-              meliorLlvm.mlir
-              pkgs.zlib
-              pkgs.libxml2
+              ltoLlvm.clang
+              ltoLlvm.libclang
+              ltoLlvm.llvm
+              ltoLlvm.lld
             ];
-            MLIR_SYS_220_PREFIX = "${meliorConfig}";
-            TABLEGEN_220_PREFIX = "${meliorConfig}";
-            "CARGO_TARGET_${lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget)}_LINKER" = "${meliorLlvm.clang}/bin/clang";
+            LIBCLANG_PATH = "${ltoLlvm.libclang.lib}/lib";
+            # Compiler setup hooks run after derivation attributes are loaded.
+            shellHook = old.shellHook + ''
+              export CC="${ltoLlvm.clang}/bin/clang"
+              export CXX="${ltoLlvm.clang}/bin/clang++"
+            '';
+            # Keep build scripts and proc macros on the host configuration.
+            CARGO_BUILD_TARGET = target;
+            "CARGO_TARGET_${targetKey}_LINKER" = "${ltoLlvm.clang}/bin/clang";
+            "CARGO_TARGET_${targetKey}_RUSTFLAGS" = "-Clinker-plugin-lto -Clink-arg=-fuse-ld=lld";
           });
         }
       );
