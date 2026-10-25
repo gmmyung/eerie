@@ -24,7 +24,7 @@ or `EERIE_PYTHON`; custom installations use `Compiler::with_library`.
 
 - Match the Windows native runtime's CRT to Rust in debug and release builds, including `crt-static`, fixing linker warning LNK4098.
 - Report compiler discovery, incompatible embedding API, and missing-symbol failures as recoverable errors, with retry after a failed load.
-- Load compiler symbols locally and prefer its own LLVM/MLIR implementations on glibc Linux, with a Melior coexistence regression. Stock macOS wheels still require a compiler build with isolated LLVM/MLIR symbols for Melior coexistence.
+- Load compiler symbols locally and prefer its own LLVM/MLIR implementations on glibc Linux. Support macOS Melior coexistence with the stock compiler wheel through an application build setting that hides executable exports. CI checks both initialization orders in debug and release builds on Linux and macOS.
 
 ## 0.6.1 - 2026-10-24
 

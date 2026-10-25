@@ -10,8 +10,8 @@ The API is experimental and may change between releases. Eerie 0.7 uses
 **IREE 3.13.0**; use the matching compiler library and recompile models generated
 by IREE 3.11 or earlier.
 
-Using Melior and Eerie in one process remains unsupported on macOS with stock
-compiler wheels because their LLVM/MLIR symbols can collide.
+Using Melior with Eerie's compiler on macOS requires an
+[application build setting](#using-melior-on-macos) to keep their LLVM/MLIR symbols separate.
 
 ## Installation
 
@@ -42,12 +42,30 @@ python -m pip install iree-base-compiler==3.13.0
 ```
 
 `Compiler::new()` discovers the library in your active Python environment and
-loads it automatically. Building your Rust project requires no compiler library
-paths or linker configuration.
+loads it automatically. No compiler library paths or rpath settings are required.
 
 For custom builds, use `Compiler::with_library(path)` with a library file or its
 directory. If you have multiple Python installations, `EERIE_PYTHON` can select
 the Python executable used for discovery.
+
+### Using Melior on macOS
+
+To use Melior and Eerie's compiler in the same executable, add this to your
+application's `build.rs`:
+
+```rust
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols");
+    }
+}
+```
+
+This keeps Melior's symbols private while Eerie loads the stock compiler wheel.
+It disables all executable exports; applications that expose a host API to
+plugins need a different export policy. Pass MLIR text or bytecode between the
+two libraries, keeping raw MLIR handles with their originating library.
 
 ### Cross-language LTO
 

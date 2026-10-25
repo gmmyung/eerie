@@ -10,7 +10,10 @@ publish = false
 eerie = { path = "../..", default-features = false, features = ["compiler"] }
 melior = "=0.27.8"
 
-# Nix's fortified glibc headers require optimization in this C++ helper,
-# including when the rest of the regression executable uses the debug profile.
+# Nix's fortified glibc headers require optimization in this C++ helper.
+# Cargo otherwise compiles build dependencies at O0 in both profiles.
 [profile.dev.package.tblgen]
+opt-level = 1
+
+[profile.release.package.tblgen]
 opt-level = 1

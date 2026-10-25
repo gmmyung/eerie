@@ -13,11 +13,13 @@ metadata = json.loads(subprocess.check_output([
     "cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
     "--manifest-path", str(MANIFEST),
 ], cwd=ROOT))
-subprocess.run([
-    "cargo", "build", "--locked", "--manifest-path", str(MANIFEST),
-], cwd=ROOT, check=True)
-binary = Path(metadata["target_directory"]) / "debug" / (
-    "eerie-melior-coexistence.exe" if os.name == "nt" else "eerie-melior-coexistence"
-)
-for order in ["iree-first", "melior-first"]:
-    subprocess.run([str(binary), order], cwd=ROOT, check=True, timeout=30)
+for profile in ["debug", "release"]:
+    subprocess.run([
+        "cargo", "build", "--locked", "--manifest-path", str(MANIFEST),
+        *(["--release"] if profile == "release" else []),
+    ], cwd=ROOT, check=True)
+    binary = Path(metadata["target_directory"]) / profile / (
+        "eerie-melior-coexistence.exe" if os.name == "nt" else "eerie-melior-coexistence"
+    )
+    for order in ["iree-first", "melior-first"]:
+        subprocess.run([str(binary), order], cwd=ROOT, check=True, timeout=30)

@@ -84,11 +84,14 @@ It checks default, runtime-only, compiler-only, and no_std builds, fixture
 reproducibility, offline runtime documentation, and packaged raw bindings.
 Windows exercises debug and release builds, plus static CRT linkage.
 
-The separate Melior regression uses LLVM/MLIR 22 and checks both initialization
-orders in the same process. Run it with `nix develop .#melior -c python tools/test-melior.py`.
-CI runs it on Linux. Stock macOS compiler wheels still allow LLVM/MLIR weak
-symbols to bind to the host's implementation; local runtime loading does not
-isolate those symbols, so this configuration remains unsupported on macOS.
+The separate Melior regression uses LLVM/MLIR 22 and the stock IREE compiler
+wheel. It checks both initialization orders in debug and release builds,
+compiling Melior-generated MLIR with VMVX and LLVM CPU backends in the same
+process. Run it with `nix develop .#melior -c python tools/test-melior.py`.
+CI runs it on Linux and Apple Silicon macOS. The fixture's macOS build script
+hides executable exports to prevent IREE from binding to Melior's LLVM/MLIR
+definitions. Applications need the same explicit build setting; see the
+[Melior setup guide](README.md#using-melior-on-macos).
 
 Run the standalone Cortex-M test with the Rust `thumbv7em-none-eabihf` target,
 Arm GNU toolchain, Clang/libclang, CMake, and `qemu-system-arm` on `PATH`:
