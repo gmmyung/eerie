@@ -4,7 +4,7 @@ version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Gyungmin Myung"]
-description = "Rustic binding to the IREE Compiler/Runtime"
+description = "Rust bindings to the IREE compiler and runtime"
 readme = "README.md"
 repository = "https://github.com/gmmyung/eerie"
 

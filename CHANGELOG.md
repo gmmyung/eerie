@@ -1,30 +1,36 @@
 # Changelog
 
-## 0.7.0 - Unreleased
+## 0.7.0 - 2026-10-25
 
-Requires `eerie-sys 0.5.0`.
+Released with `eerie-sys 0.5.0`; uses IREE 3.13.0.
+
+### Added
+
+- Automatic compiler discovery from the active Python environment, with `Compiler::with_library` for custom installations and `library_path` / `api_version` for inspection. Building the compiler feature no longer requires an installed compiler library.
+- Optional `cross-lang-lto` for the runtime on Linux and macOS, with a matching Nix toolchain and application linker setup guide.
+- Melior coexistence with the stock compiler wheel on macOS through an explicit application export setting. Linux and macOS CI cover both initialization orders, debug/release builds, and VMVX/LLVM CPU compilation.
+- Compiler API documentation on docs.rs.
 
 ### Changed
 
-- Discover and load the compiler shared library automatically at runtime, removing compiler path configuration, rpaths, and linker flags from normal installation. Building and documenting the compiler feature no longer requires an installed compiler library or network access.
-- Allow compiler handles to be created, cloned, and dropped independently while sharing one retained process-wide initialization. Add `Compiler::with_library`, `library_path`, and `api_version`.
-- Raw compiler bindings now expose an `eerie_sys::compiler::IreeCompiler` API table instead of linker-resolved free functions. Raw callers must load and initialize a table and retain it for every object created through it.
-- Include compiler APIs in docs.rs builds.
-- Add an explicit `cross-lang-lto` feature for the runtime on Linux and macOS with Clang ThinLTO, a matching Nix toolchain, and a regression proving that IREE C code is inlined into Rust. Application linker-plugin configuration is required. The macOS shell supplies a Darwin linker adapter and ARM builds align the native target's `ccidx` requirement with Rust.
-- Stop translating extra Rust codegen flags into native C/C++ flags; native LTO is selected explicitly by its Cargo feature.
-- Simplify private VM argument lists and compiler callbacks, scope logging/error dependencies to their features, and remove unused Linux C++ runtime linkage. Honor compiler callback byte lengths and release status-message storage when formatting fails.
-- Restrict bare-metal math/libc shims to bare-metal targets and native build dependencies to the features that need them. Native driver selection now follows Cargo features; Vulkan is no longer compiled into default Linux/Windows builds.
-- Remove legacy compiler environment overrides, system-library searching, redundant status-code mappings, unused dependency/configuration, and the obsolete singleton initialization error and free API-version helper. Trim packaged sources for disabled components.
-
-Remove IREE-specific rpath settings from `RUSTFLAGS` and `.cargo/config.toml`
-when upgrading. Compiler discovery uses the active Python executable on PATH
-or `EERIE_PYTHON`; custom installations use `Compiler::with_library`.
+- Compiler handles share process-wide initialization and can be created, cloned, and dropped independently.
+- Raw compiler bindings expose an `eerie_sys::compiler::IreeCompiler` API table instead of linker-resolved free functions.
+- Native runtime drivers follow Cargo features; Vulkan is compiled only when enabled. Math/libc shims are restricted to bare-metal targets, and dependencies are enabled only by the features that use them.
+- Native C/C++ builds no longer translate extra Rust codegen flags. Cross-language LTO is selected explicitly by its feature.
+- Remove obsolete compiler configuration and unused wrappers, and trim packaged native sources.
 
 ### Fixed
 
-- Match the Windows native runtime's CRT to Rust in debug and release builds, including `crt-static`, fixing linker warning LNK4098.
-- Report compiler discovery, incompatible embedding API, and missing-symbol failures as recoverable errors, with retry after a failed load.
-- Load compiler symbols locally and prefer its own LLVM/MLIR implementations on glibc Linux. Support macOS Melior coexistence with the stock compiler wheel through an application build setting that hides executable exports. CI checks both initialization orders in debug and release builds on Linux and macOS.
+- Match the Windows runtime's CRT to Rust for debug/release and `crt-static` builds, eliminating LNK4098.
+- Return recoverable compiler discovery, incompatible API, and missing-symbol errors, allowing retries after failed loading.
+- Prefer the compiler's own LLVM/MLIR symbols on glibc Linux to avoid Melior collisions.
+- Respect compiler callback byte lengths and free status-message storage when formatting fails.
+
+### Upgrading from 0.6
+
+- Remove IREE-specific rpath settings from `RUSTFLAGS` and `.cargo/config.toml`. Install `iree-base-compiler==3.13.0`; discovery uses Python on PATH or `EERIE_PYTHON`.
+- Raw binding users must load and initialize an `IreeCompiler` table and retain it for the lifetime of every compiler object created through it.
+- For Melior on macOS, apply the [application build setting](README.md#using-melior-on-macos). It hides executable exports; applications with a host plugin API need a different export policy.
 
 ## 0.6.1 - 2026-10-24
 
